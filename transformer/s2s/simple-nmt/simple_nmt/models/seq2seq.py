@@ -153,7 +153,7 @@ class Decoder(nn.Module):
 
         # Unlike encoder, decoder must take an input for sequentially.
         y, h = self.rnn(x, h_t_1) # h_t_1 : [(n_l, b, h), (n_l, b, h)] : 이전 시점의 hidden, context tensors, it is 0 when it's not provided.
-            # y : [b, n, h] // h: [l, b, h]
+            # y : [b, n, h] // h: [l, b, h],[l,b,h]
         return y, h
 
 
@@ -411,8 +411,8 @@ class Seq2Seq(nn.Module):
                                                           h_t_tilde, # 지난 타임 스텝의 틸다
                                                           decoder_hidden # [l, b, h], [l, b, h]
                                                           )
-            # |decoder_output| = (batch_size, 1, hidden_size)
-            # |decoder_hidden| = (n_layers, batch_size, hidden_size)
+            # |decoder_output| = (b, 1, h)
+            # |decoder_hidden| = (n, b, h), (n,b,h)
 
 
             context_vector = self.attn(h_src, decoder_output, mask)
@@ -439,7 +439,14 @@ class Seq2Seq(nn.Module):
 
 
     def search(self, src, is_greedy=True, max_length=255):
+        '''
+        추론을 위한 method
+
+        is_greedy : softmax에서 가장 높은 확률값을 갖는 친구를 return
+            - false일 경우 distribution sampling
+        '''
         if isinstance(src, tuple):
+            # zero pad부분 masking
             x, x_length = src
             mask = self.generate_mask(x, x_length)
         else:
@@ -448,14 +455,17 @@ class Seq2Seq(nn.Module):
         batch_size = x.size(0)
 
         # Same procedure as teacher forcing.
-        emb_src = self.emb_src(x)
-        h_src, h_0_tgt = self.encoder((emb_src, x_length))
-        decoder_hidden = self.fast_merge_encoder_hiddens(h_0_tgt)
+        emb_src = self.emb_src(x) # [b, n, emb]
+        h_src, h_0_tgt = self.encoder((emb_src, x_length)) # (b,n,h), ([l*2, b, h/2], [l*2, b, h/2])
+        decoder_hidden = self.fast_merge_encoder_hiddens(h_0_tgt) # [l, b, h], [l, b, h]
 
         # Fill a vector, which has 'batch_size' dimension, with BOS value.
-        y = x.new(batch_size, 1).zero_() + data_loader.BOS
-
+        y = x.new(batch_size, 1).zero_() + data_loader.BOS # data_loader의 상단에 보면 BOS오브젝트 있음.
+            # x와 같은 타입, 디바이스를 [B, 1]을 0으로 채워서 만들고 거기다가 BOS인 2를 넣는다.
+            # 즉 [B,1] 2가 들어간 텐서가 만들어짐.
         is_decoding = x.new_ones(batch_size, 1).bool()
+            # 배치마다 디코딩이 끝나는 부분이 다를것임.(?)
+            # 아직 디코딩 중이면, 1, 디코딩 끝낫으면 0
         h_t_tilde, y_hats, indice = None, [], []
         
         # Repeat a loop while sum of 'is_decoding' flag is bigger than 0,
@@ -463,18 +473,29 @@ class Seq2Seq(nn.Module):
         while is_decoding.sum() > 0 and len(indice) < max_length:
             # Unlike training procedure,
             # take the last time-step's output during the inference.
-            emb_t = self.emb_dec(y)
+            emb_t = self.emb_dec(y) # 맨처음 y는 BOS임. 463번째 줄.
             # |emb_t| = (batch_size, 1, word_vec_size)
 
-            decoder_output, decoder_hidden = self.decoder(emb_t,
-                                                          h_t_tilde,
-                                                          decoder_hidden)
+            decoder_output, decoder_hidden = self.decoder(emb_t, # [B, 1, W]
+                                                          h_t_tilde, # None
+                                                          decoder_hidden) # [l,b,h],[l,b,h]
+                # decoder_output : [b, 1, h] 
+                # decoder_hidden : [n,b,h], [n,b,h]
+            '''
+            decoder_output
+                 |
+                ____
+               |    | -> decoder_hidden
+                ----
+            
+            '''
             context_vector = self.attn(h_src, decoder_output, mask)
+                # (b, 1, h)  # softmax(Q*W*K)
             h_t_tilde = self.tanh(self.concat(torch.cat([decoder_output,
                                                          context_vector
                                                          ], dim=-1)))
             y_hat = self.generator(h_t_tilde)
-            # |y_hat| = (batch_size, 1, output_size)
+                # |y_hat| = (b, 1, output_size) 단어 분포가 나와.
             y_hats += [y_hat]
 
             if is_greedy:
@@ -482,11 +503,15 @@ class Seq2Seq(nn.Module):
                 # |y| = (batch_size, 1)
             else:
                 # Take a random sampling based on the multinoulli distribution.
-                y = torch.multinomial(y_hat.exp().view(batch_size, -1), 1)
+                y = torch.multinomial(y_hat.exp().view(batch_size, -1), 1) # exponential이 왜필요할까?
                 # |y| = (batch_size, 1)
 
             # Put PAD if the sample is done.
             y = y.masked_fill_(~is_decoding, data_loader.PAD)
+                # masked_fill_ : ~is_decoding이 True이면, 1로 채움.
+                # ~ 는 리스트에 모두 -1을 해줌 -> 디코딩한 부분은 1에서 0으로 됨. 
+                # 즉 디코딩한 부분은 PAD(1)으로 채워짐.
+                
             # Update is_decoding if there is EOS token.
             is_decoding = is_decoding * torch.ne(y, data_loader.EOS)
             # |is_decoding| = (batch_size, 1)

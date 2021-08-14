@@ -332,13 +332,13 @@ def main(config, model_weight=None, opt_weight=None):
     )
 
     input_size, output_size = len(loader.src.vocab), len(loader.tgt.vocab)
-        # 이게 어떻게 작동하는거지??? loader는 Generator인데 어떻게 src에서 vocab을 가져오지?
+        # 이게 어떻게 작동하는거지??? loader는 generator가 아님... dataloader has src, tgt
         # input언어의 vocab size, output언어의 vocab size
     model = get_model(input_size, output_size, config)
     crit = get_crit(output_size, data_loader.PAD)
     
-
-    if model_weight is not None:
+    # continue_train.py에서 결정되는부분임.
+    if model_weight is not None:    
         model.load_state_dict(model_weight)
 
     # Pass models to GPU device if it is necessary.

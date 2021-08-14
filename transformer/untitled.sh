@@ -138,3 +138,25 @@ mkdir models/models.20200906
 python train.py --asdf
 
 python train.py --train ./data/corpus.shuf.train.tok.bpe --valid ./data/corpus.shuf.valid.tok.bpe --lang enko --gpu_id 0 --batch_size 160 --n_epochs 30 --max_length 64 --dropout .2 --word_vec_size 512 --hidden_size 768 --n_layer 4 --max_grad_norm 1e+8 --iteration_per_update 2 --lr 1e-3 --lr_step 0 --use_adam --model_fn ./models/models.20200906/enko.bs-160.max_length-64.dropout-2.ws-512.hs-768.n_layers-4.iter_per_update-2.pth
+
+
+6. continue_training.py
+--------------------------------------------------
+- trainer.py에 torch.save를 보면 model, opt, config, src_vocab, tgt_vocab등을 pt로 세이브함.
+- train.py에 define_argparser를 보면 is_continue = False로 되어있다.
+	True로 주면 --load_fn이라는게 생김.
+	True이면 add_argument에 있는 required가 not True가 되어버림.
+- continue_train.py
+	if __name__ == '__main__':
+		config = define_argparser(is_continue=True) # 이것부터 실행
+		# 조심할것은 p.add_argument('--init_epoch'에서 값을 19 막 이렇게 줘야해 when saved model was ended at 18th epochs b/c learning scheduler
+		continue_main(config, main) # 위에서 받은 config를 continue_main에 전달함
+
+- continue_train.py 쓰는 방법
+cmd : python continue_train.py --load_fn ./models/models.20200906/enko.transformer.bs-128.max_length-64.dropout-2.hs0768.n_layers-4.iter_per_update-16.random.03.1.87-6.48.1.79-5.96.pth --init_epoch 4 --max_grad_norm 1e+7
+
+
+
+7. 추론을 하기위한 method를 작성해보자 : seq2seq.py
+---------------------------------------------------
+- search method만듦
