@@ -36,7 +36,7 @@ class MaximumLikelihoodEstimationEngine(Engine):
 
         super().__init__(func)
         # func을 Engine class에 보내 실행하기.. 근데 그럼 어떤 효과가 잇는거지?
-        '''https://pytorch.org/docs/stable/_modules/torch/nn/modules/module.html#Module'''
+        '''https://pytorch.org/ignite/_modules/ignite/engine/engine.html#Engine'''
         ''' 이해 안되면 이거 해보기.
         class adding():
             def __init__(self, a,b):

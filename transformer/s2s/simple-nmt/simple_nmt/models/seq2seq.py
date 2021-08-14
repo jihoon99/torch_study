@@ -460,12 +460,21 @@ class Seq2Seq(nn.Module):
         decoder_hidden = self.fast_merge_encoder_hiddens(h_0_tgt) # [l, b, h], [l, b, h]
 
         # Fill a vector, which has 'batch_size' dimension, with BOS value.
-        y = x.new(batch_size, 1).zero_() + data_loader.BOS # data_loader의 상단에 보면 BOS오브젝트 있음.
+        y = x.new(batch_size, 1).zero_() + data_loader.BOS 
+            # data_loader의 상단에 보면 BOS오브젝트 있음.
             # x와 같은 타입, 디바이스를 [B, 1]을 0으로 채워서 만들고 거기다가 BOS인 2를 넣는다.
             # 즉 [B,1] 2가 들어간 텐서가 만들어짐.
-        is_decoding = x.new_ones(batch_size, 1).bool()
+        '''
+               [[2]
+                [2]
+                 .
+                 .
+                [2]]
+        '''
+        is_decoding = x.new_ones(batch_size, 1).bool() # bunch of 1
             # 배치마다 디코딩이 끝나는 부분이 다를것임.(?)
             # 아직 디코딩 중이면, 1, 디코딩 끝낫으면 0
+            # EOS가 나오면 끝나는것,,
         h_t_tilde, y_hats, indice = None, [], []
         
         # Repeat a loop while sum of 'is_decoding' flag is bigger than 0,
@@ -473,7 +482,7 @@ class Seq2Seq(nn.Module):
         while is_decoding.sum() > 0 and len(indice) < max_length:
             # Unlike training procedure,
             # take the last time-step's output during the inference.
-            emb_t = self.emb_dec(y) # 맨처음 y는 BOS임. 463번째 줄.
+            emb_t = self.emb_dec(y) # 맨처음 y는 BOS(2)임.
             # |emb_t| = (batch_size, 1, word_vec_size)
 
             decoder_output, decoder_hidden = self.decoder(emb_t, # [B, 1, W]
@@ -501,6 +510,7 @@ class Seq2Seq(nn.Module):
             if is_greedy:
                 y = y_hat.argmax(dim=-1)
                 # |y| = (batch_size, 1)
+                # 만약 EOS면 3이 될거야
             else:
                 # Take a random sampling based on the multinoulli distribution.
                 y = torch.multinomial(y_hat.exp().view(batch_size, -1), 1) # exponential이 왜필요할까?
@@ -508,21 +518,33 @@ class Seq2Seq(nn.Module):
 
             # Put PAD if the sample is done.
             y = y.masked_fill_(~is_decoding, data_loader.PAD)
-                # masked_fill_ : ~is_decoding이 True이면, 1로 채움.
-                # ~ 는 리스트에 모두 -1을 해줌 -> 디코딩한 부분은 1에서 0으로 됨. 
-                # 즉 디코딩한 부분은 PAD(1)으로 채워짐.
+                # ~is_decoding 에서 ~은 -1임.
+                # 1. 맨처음 step을 기준으로 말하자면 : is_decoding은 True로 채워진 [b, 1] matric이다.
+                # 2. -1을 전부 취해주면 False로 채워진 [b,1]임.
+                # 3. ~is_decoding이 True인 부분에 PAD(1)을 y자리에 채운다.
+                # 4. 즉 한번 EOS(밑밑줄), PAD라고 불리우면 계속 PAD라고 예측하게 선언하는것.
                 
             # Update is_decoding if there is EOS token.
             is_decoding = is_decoding * torch.ne(y, data_loader.EOS)
-            # |is_decoding| = (batch_size, 1)
+                # |is_decoding| = (batch_size, 1)
+                # EOS가 y에서 나왔으면 is_decoding쪽을 0으로 만들어 버림.
+                # torch.ne(x, y) : x != y일 경우 True인 Tensor를 반환. 즉 EOS가 아닌 부분은 True로 놓고 is_decoding이랑 곱하기를 해서 살려두는 것임.
+            '''
+                               [1]    *    [T]
+                               [1]    *    [T]
+                               [1]    *    [F]
+
+            '''
             indice += [y]
 
         y_hats = torch.cat(y_hats, dim=1)
         indice = torch.cat(indice, dim=1)
-        # |y_hat| = (batch_size, length, output_size)
-        # |indice| = (batch_size, length)
+        # |y_hats| = (batch_size, length, output_size)
+        # |indice| = (batch_size, length) # sample별 문장별 원핫인코딩.
 
         return y_hats, indice
+
+
 
     #@profile
     def batch_beam_search(

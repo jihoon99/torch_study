@@ -160,3 +160,9 @@ cmd : python continue_train.py --load_fn ./models/models.20200906/enko.transform
 7. 추론을 하기위한 method를 작성해보자 : seq2seq.py
 ---------------------------------------------------
 - search method만듦
+
+
+8. 추론을 하기위한 : translate.py
+----------------------------------------------------
+- beam_search : 1로 해야함.(아직 beam_search안배움.)
+- 
