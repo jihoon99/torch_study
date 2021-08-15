@@ -45,7 +45,7 @@ def define_argparser():
         help='Number of best inference result per sample. Default=%(default)s'
     )
     p.add_argument(
-        '--beam_size',
+        '--beam_size', # beam search 안할 거면 1
         type=int,
         default=5,
         help='Beam size for beam search. Default=%(default)s'
