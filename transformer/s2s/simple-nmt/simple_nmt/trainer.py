@@ -75,8 +75,7 @@ class MaximumLikelihoodEstimationEngine(Engine):
         '''
         # accumulate gradient update
         engine.model.train() # 파라미터 학습 할 것임.
-        if engine.state.iteration % engine.config.iteration_per_update == 1 \
-            or engine.config.iteration_per_update == 1: # 만약 설정을 config.iteration_per_update 을 1로 했을 경우, 매 iter마다 업데이트, 만약 설정을 10으로 하면 11마다 zero grad함.
+        if engine.state.iteration % engine.config.iteration_per_update == 1 or engine.config.iteration_per_update == 1: # 만약 설정을 config.iteration_per_update 을 1로 했을 경우, 매 iter마다 업데이트, 만약 설정을 10으로 하면 11마다 zero grad함.
             if engine.state.iteration > 1:
                 engine.optimizer.zero_grad()
 
