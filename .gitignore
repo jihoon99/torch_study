@@ -1,4 +1,6 @@
 transformer/data/
+torch_packages/s2s/data/
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
