@@ -27,7 +27,7 @@ class DataLoader():
                  dsl=False
                  ):
 
-        super(DataLoader, self).__init__()
+        super(DataLoader, self).__init__() # ??? 상속받을게 없는데?
 
         # Field -> fields -> TabularDataset -> build_vocab -> Bucket
 
@@ -120,21 +120,26 @@ class TranslationDataset(data.Dataset):
                 data.Dataset.
         """
         if not isinstance(fields[0], (tuple, list)):
+            # fields가 [('src',src),('tgt',tgt)]형태가 아닐때 다시 정의를 함.
             fields = [('src', fields[0]), ('trg', fields[1])]
 
         if not path.endswith('.'):
+            # 주소의 끝에 .이 없다면 추가로 넣어줘.
             path += '.'
 
         src_path, trg_path = tuple(os.path.expanduser(path + x) for x in exts)
 
         examples = []
         with open(src_path, encoding='utf-8') as src_file, open(trg_path, encoding='utf-8') as trg_file:
+            # src, trg path에서 파일을 불러오고 한줄씩 for문
             for src_line, trg_line in zip(src_file, trg_file):
-                src_line, trg_line = src_line.strip(), trg_line.strip()
+                src_line, trg_line = src_line.strip(), trg_line.strip() # 오른쪽끝 스페이스 제거.
                 # max_length가 있을 경우에는 작업을 해줌.
-                if max_length and max_length < max(len(src_line.split()), len(trg_line.split())):
+                if max_length and max_length < max(len(src_line.split()), len(trg_line.split())): 
+                    # 스페이스를 띄어쓰기라고 가정, max_len보다 클때(?) 이부분 잘못된거 같은데...
                     continue
                 if src_line != '' and trg_line != '':
+                    # 별일 없을때 examples에 데이터를 추가.
                     examples += [data.Example.fromlist([src_line, trg_line], fields)]
 
         super().__init__(examples, fields, **kwargs)
@@ -158,3 +163,6 @@ if __name__ == '__main__':
 
         if batch_index > 1:
             break
+        '''???????????????????????????????????????????????????????'''
+        # batch.src의 shape이 계속 바뀌는데... 어떻게 처리할까?
+

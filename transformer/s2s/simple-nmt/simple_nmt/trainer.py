@@ -34,7 +34,7 @@ class MaximumLikelihoodEstimationEngine(Engine):
         self.lr_scheduler = lr_scheduler
         self.config = config
 
-        super().__init__(func)
+        super().__init__(func) # 여기서 func은 MaximumLikelihoodEstimationEngine.train임.
         # func을 Engine class에 보내 실행하기.. 근데 그럼 어떤 효과가 잇는거지?
         '''https://pytorch.org/ignite/_modules/ignite/engine/engine.html#Engine'''
         ''' 이해 안되면 이거 해보기.
@@ -327,22 +327,38 @@ class MaximumLikelihoodEstimationEngine(Engine):
     
 
 class SingleTrainer():
+    '''
+    from train.py
+
+    mle_trainer = SingleTrainer(MaximumLikelihoodEstimationEngine, config)
+    mle_trainer.train(
+        model,
+        crit,
+        optimizer,
+        train_loader=loader.train_iter,
+        valid_loader=loader.valid_iter,
+        src_vocab=loader.src.vocab,
+        tgt_vocab=loader.tgt.vocab,
+        n_epochs=config.n_epochs,
+        lr_scheduler=lr_scheduler,
+    )'''
+
 
     def __init__(self, target_engine_class, config):
-        self.target_engine_class = target_engine_class
+        self.target_engine_class = target_engine_class # MaximumLikelihoodEstimationEngine
         self.config = config
 
     def train(
-        self,
-        model, crit, optimizer,
-        train_loader, valid_loader,
-        src_vocab, tgt_vocab,
-        n_epochs,
-        lr_scheduler=None
-    ):
+            self,
+            model, crit, optimizer,
+            train_loader, valid_loader,
+            src_vocab, tgt_vocab,
+            n_epochs,
+            lr_scheduler=None):
+            
         # Declare train and validation engine with necessary objects.
-        train_engine = self.target_engine_class(
-            self.target_engine_class.train,
+        train_engine = self.target_engine_class( # MaximumLikelihoodEstimationEngine init
+            self.target_engine_class.train, # func
             model,
             crit,
             optimizer,

@@ -255,6 +255,8 @@ def get_crit(output_size, pad_index):
     '''
     loss_weight[pad_index] = 0.
         # 패드인덱스를 받아와서 거기다가 0을 할당해서, 맞춰도 점수를 주지마.
+    '''???????????????????????????????????????????????????????????'''
+        # pad_index를 가져와야하는데, main함수에서 보면 data_loader의 PAD ; 1을 가져왔으. 왜?
     # Instead of using Cross-Entropy loss,
     # we can use Negative Log-Likelihood(NLL) loss with log-probability.
     crit = nn.NLLLoss(
@@ -293,15 +295,15 @@ def get_scheduler(optimizer, config):
     '''
     if config.lr_step > 0:
         lr_scheduler = optim.lr_scheduler.MultiStepLR(
-            optimizer,
-            milestones=[i for i in range(
-                max(0, config.lr_decay_start - 1), # 내가 원하는 시작 에폭부터
-                (config.init_epoch - 1) + config.n_epochs, # 내가 원하는 끝나는 에폭까지
-                config.lr_step # 1
-            )],
-            gamma=config.lr_gamma, # 0.5씩 작아짐.
-            last_epoch=config.init_epoch - 1 if config.init_epoch > 1 else -1,
-        )
+                                                    optimizer,
+                                                    milestones=[i for i in range(
+                                                                                max(0, config.lr_decay_start - 1), # 내가 원하는 시작 에폭부터
+                                                                                (config.init_epoch - 1) + config.n_epochs, # 내가 원하는 끝나는 에폭까지
+                                                                                config.lr_step # 1
+                                                                                )],
+                                                    gamma=config.lr_gamma, # 0.5씩 작아짐.
+                                                    last_epoch=config.init_epoch - 1 if config.init_epoch > 1 else -1,
+                                                )
     else:
         lr_scheduler = None
 
@@ -332,11 +334,12 @@ def main(config, model_weight=None, opt_weight=None):
     )
 
     input_size, output_size = len(loader.src.vocab), len(loader.tgt.vocab)
-        # 이게 어떻게 작동하는거지??? loader는 generator가 아님... dataloader has src, tgt
+        # loader는 loader.src.vocab, loader.train_iter.src[0], [1]등을 갖고 있음.
         # input언어의 vocab size, output언어의 vocab size
     model = get_model(input_size, output_size, config)
     crit = get_crit(output_size, data_loader.PAD)
-    
+    '''?????????????????????????????????????????????????????'''
+
     # continue_train.py에서 결정되는부분임.
     if model_weight is not None:    
         model.load_state_dict(model_weight)
