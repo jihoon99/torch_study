@@ -153,7 +153,9 @@ class Decoder(nn.Module):
 
         # Unlike encoder, decoder must take an input for sequentially.
         y, h = self.rnn(x, h_t_1) # h_t_1 : [(n_l, b, h), (n_l, b, h)] : 이전 시점의 hidden, context tensors, it is 0 when it's not provided.
-            # y : [b, n, h] // h: [l, b, h],[l,b,h]
+            # y : [b, 1, h] // h: [l, b, h],[l,b,h]
+            # |decoder_output| = (b, 1, h)
+            # |decoder_hidden| = (n, b, h), (n,b,h)
         return y, h
 
 
@@ -459,7 +461,9 @@ class Seq2Seq(nn.Module):
         h_src, h_0_tgt = self.encoder((emb_src, x_length)) # (b,n,h), ([l*2, b, h/2], [l*2, b, h/2])
         decoder_hidden = self.fast_merge_encoder_hiddens(h_0_tgt) # [l, b, h], [l, b, h]
 
-        # Fill a vector, which has 'batch_size' dimension, with BOS value.
+
+        # --------------- 여기서부터 달라져----------------------------
+        # decoding첫 파트 BOS넣어주기 : [b, 1]
         y = x.new(batch_size, 1).zero_() + data_loader.BOS 
             # data_loader의 상단에 보면 BOS오브젝트 있음.
             # x와 같은 타입, 디바이스를 [B, 1]을 0으로 채워서 만들고 거기다가 BOS인 2를 넣는다.
@@ -471,6 +475,7 @@ class Seq2Seq(nn.Module):
                  .
                 [2]]
         '''
+
         is_decoding = x.new_ones(batch_size, 1).bool() # bunch of 1
             # 배치마다 디코딩이 끝나는 부분이 다를것임.(?)
             # 아직 디코딩 중이면, 1, 디코딩 끝낫으면 0
@@ -505,6 +510,7 @@ class Seq2Seq(nn.Module):
                                                          ], dim=-1)))
             y_hat = self.generator(h_t_tilde)
                 # |y_hat| = (b, 1, output_size) 단어 분포가 나와.
+                # 각 샘플별, 현제 스탭에 관한, 단어 로그 확률 분포가 나옴.
             y_hats += [y_hat]
 
             if is_greedy:
@@ -525,6 +531,7 @@ class Seq2Seq(nn.Module):
                 # 4. 즉 한번 EOS(밑밑줄), PAD라고 불리우면 계속 PAD라고 예측하게 선언하는것.
                 
             # Update is_decoding if there is EOS token.
+
             is_decoding = is_decoding * torch.ne(y, data_loader.EOS)
                 # |is_decoding| = (batch_size, 1)
                 # EOS가 y에서 나왔으면 is_decoding쪽을 0으로 만들어 버림.

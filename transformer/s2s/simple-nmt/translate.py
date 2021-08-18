@@ -173,14 +173,19 @@ def get_model(input_size, output_size, train_config, is_reverse=False):
 
 
 if __name__ == '__main__':
+    # 뭐야 이게...
+    '''??????????????????????????????'''
     sys.stdout = codecs.getwriter("utf-8")(sys.stdout.detach())
+
+
     config = define_argparser()
 
     # Load saved model.
     saved_data = torch.load(
         config.model_fn,
-        map_location='cpu',
+        map_location='cpu', # map_location = 'cpu' if config.gpu_id < 0 else 'cuda:%d' % config.gpu_id
     )
+
 
     # Load configuration setting in training.
     train_config = saved_data['config']
