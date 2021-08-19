@@ -70,6 +70,12 @@ def define_argparser():
 
 def read_text(batch_size=128):
     # This method gets sentences from standard input and tokenize those.
+    '''
+    iterator처럼 행동하는 함수., mecab에 bpe까지 한것을 넣어줘야함.
+
+    line은 문장들이 들어가 있는데, 문장과 문장 사이가 ' '로 구분되어 있어서 split(' ')을 통해 구분한다.
+
+    '''
     lines = []
 
     sys.stdin = codecs.getreader("utf-8")(sys.stdin.detach())
@@ -78,7 +84,7 @@ def read_text(batch_size=128):
         if line.strip() != '':
             lines += [line.strip().split(' ')]
 
-        if len(lines) >= batch_size:
+        if len(lines) >= batch_size: # 배치사이즈만큼 차면 line을 내뱉고 // 라인을 비워줘.
             yield lines
             lines = []
 
@@ -99,7 +105,7 @@ def to_text(indice, vocab):
                 # line += ['<EOS>']
                 break
             else:
-                line += [vocab.itos[index]]
+                line += [vocab.itos[index]] # itos : index to string
 
         line = ' '.join(line)
         lines += [line]
@@ -168,6 +174,7 @@ def get_model(input_size, output_size, train_config, is_reverse=False):
     else:
         model.load_state_dict(saved_data['model'])  # Load weight parameters from the trained model.
     model.eval()  # We need to turn-on the evaluation mode, which turns off all drop-outs.
+    # eavl 안하면 dropout같은거 실행되서 성능 진짜 낮아짐
 
     return model
 
@@ -180,7 +187,7 @@ if __name__ == '__main__':
 
     config = define_argparser()
 
-    # Load saved model.
+    # Load saved model. # saved from trainer.py
     saved_data = torch.load(
         config.model_fn,
         map_location='cpu', # map_location = 'cpu' if config.gpu_id < 0 else 'cuda:%d' % config.gpu_id
@@ -191,11 +198,16 @@ if __name__ == '__main__':
     train_config = saved_data['config']
 
     src_vocab, tgt_vocab, is_reverse = get_vocabs(train_config, config, saved_data)
+    # is_reverse는 dual learning할때 필요함. // dsl아니니까 그냥 저장된 vocab 불러옴.
+
 
     # Initialize dataloader, but we don't need to read training & test corpus.
     # What we need is just load vocabularies from the previously trained model.
     loader = DataLoader()
     loader.load_vocab(src_vocab, tgt_vocab)
+    '''
+    데이터를 불러오지 않아도.. 보캡 빌드했던걸 불러올수 있다는거지.. 잘와닿지는 않는다.
+    '''
 
     input_size, output_size = len(loader.src.vocab), len(loader.tgt.vocab)
     model = get_model(input_size, output_size, train_config, is_reverse)
@@ -206,36 +218,45 @@ if __name__ == '__main__':
 
     with torch.no_grad():
         # Get sentences from standard input.
-        for lines in read_text(batch_size=config.batch_size):
-            # Since packed_sequence must be sorted by decreasing order of length,
-            # sorting by length in mini-batch should be restored by original order.
+        for lines in read_text(batch_size=config.batch_size): # 배치 사이즈만큼 읽어옴.
+            # Since packed_sequence must be sorted by decreasing order of length, // 팩트 시퀀스를 쓰려면 각 문장별로 length를 알려줘야함.
+            # sorting by length in mini-batch should be restored by original order. // 문장 길이순서대로 있어야 한다. 가장 긴게 맨위에 있어야함.
             # Therefore, we need to memorize the original index of the sentence.
             lengths         = [len(line) for line in lines]
-            original_indice = [i for i in range(len(lines))]
+            original_indice = [i for i in range(len(lines))] # 소팅을 하면 문자의 순서가 바뀔테니 그걸 가지고 있을 index
 
             sorted_tuples = sorted(
                 zip(lines, lengths, original_indice),
                 key=itemgetter(1),
                 reverse=True,
             )
+                # 결과물은
+            '''
+            # 결과물은
+
+            (line, lengths, original_indice) * lines의 길이만큼 튜플들이 리스트안에 묶여있음.
+            '''
             sorted_lines    = [sorted_tuples[i][0] for i in range(len(sorted_tuples))]
             lengths         = [sorted_tuples[i][1] for i in range(len(sorted_tuples))]
             original_indice = [sorted_tuples[i][2] for i in range(len(sorted_tuples))]
 
             # Converts string to list of index.
-            x = loader.src.numericalize(
-                loader.src.pad(sorted_lines),
+            x = loader.src.numericalize( # Field에 있는 numericalize메서드 : word2idx
+                loader.src.pad(sorted_lines), 
+                    # Field에 pad라는 메서드가 있나봐. 모지란 부분을 pad로 채워줌.
+                    # sorted_lines는 아직 raw tokens이야. 사람이 읽을 수 있는 토큰들이야.
                 device='cuda:%d' % config.gpu_id if config.gpu_id >= 0 else 'cpu'
             )
-            # |x| = (batch_size, length)
+                # |x| = (batch_size, length) # one hot vector [42, 332, 15, 13, 1, 1, 1, 1, 1, ...]
+                # 저걸 수행하면 
 
             if config.beam_size == 1:
                 y_hats, indice = model.search(x)
-                # |y_hats| = (batch_size, length, output_size)
-                # |indice| = (batch_size, length)
+                # |y_hats| = (b, L, output_size)
+                # |indice| = (b, L)
 
                 output = to_text(indice, loader.tgt.vocab)
-                sorted_tuples = sorted(zip(output, original_indice), key=itemgetter(1))
+                sorted_tuples = sorted(zip(output, original_indice), key=itemgetter(1)) # output은 번역이 된 결과물인데, 이건 들어올때랑 순서가 달라진 결과물이라서, 다시 되돌리는 과정이 필요하다.
                 output = [sorted_tuples[i][0] for i in range(len(sorted_tuples))]
 
                 sys.stdout.write('\n'.join(output) + '\n')

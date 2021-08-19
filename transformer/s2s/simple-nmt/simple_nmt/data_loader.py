@@ -10,6 +10,25 @@ PAD, BOS, EOS = 1, 2, 3
 # PAD의 번호는 1, BOS는 2, EOS는 3인가보네
 
 
+# DataLoader : Field {src, tgt} -> TranslationDataset {train, valid} -> BucketIteration {train_iter, valid_iter}
+# nex(iter(train_iter)) -> 
+'''
+(tensor([[ 292,   11, 1603,  ...,  117,  140,    4],
+        [  23,   97,    5,  ...,    1,    1,    1],
+        [  23, 1373,   78,  ...,    1,    1,    1],
+        ...,
+        [  42,   18,  318,  ...,    1,    1,    1],
+        [1171, 1236,  346,  ...,    1,    1,    1],
+        [ 304,  203,    8,  ...,    1,    1,    1]]),
+tensor([90, 86, 83, 67, 66, 66, 64, 61, 59, 58, 57, 54, 54, 53, 53, 53, 53, 51,
+        51, 51, 51, 50, 49, 49, 49, 48, 47, 47, 46, 45, 44, 44, 42, 42, 41, 41,
+        40, 39, 39, 37, 37, 36, 36, 36, 34, 33, 33, 33, 32, 32, 31, 31, 31, 30,
+        29, 29, 28, 27, 26, 25, 25, 24, 23, 23, 22, 21, 21, 21, 20, 20, 20, 20,
+        19, 18, 18, 17, 17, 16, 16, 15, 15, 15, 15, 14, 14, 14, 13, 13, 13, 12,
+        12, 12, 11, 11, 11,  9,  9,  8,  6,  6]))
+두번째 텐서가 뭔지 모르겟네.     
+        '''
+
 class DataLoader():
 
     def __init__(self,
@@ -79,6 +98,7 @@ class DataLoader():
                 sort_key=lambda x: len(x.tgt) + (max_length * len(x.src)), # ?????????????? what's x?
                 sort_within_batch=True,
             )
+            # next(iter(train_iter)) 하면, 
 
             self.valid_iter = data.BucketIterator(
                 valid,
@@ -96,6 +116,7 @@ class DataLoader():
             self.tgt.build_vocab(train, max_size=max_vocab)
 
     def load_vocab(self, src_vocab, tgt_vocab):
+        '''?????????????????????????????????????'''
         self.src.vocab = src_vocab
         self.tgt.vocab = tgt_vocab
 
@@ -137,6 +158,7 @@ class TranslationDataset(data.Dataset):
                 # max_length가 있을 경우에는 작업을 해줌.
                 if max_length and max_length < max(len(src_line.split()), len(trg_line.split())): 
                     # 스페이스를 띄어쓰기라고 가정, max_len보다 클때(?) 이부분 잘못된거 같은데...
+                    '''?????????????????????????????????????????'''
                     continue
                 if src_line != '' and trg_line != '':
                     # 별일 없을때 examples에 데이터를 추가.

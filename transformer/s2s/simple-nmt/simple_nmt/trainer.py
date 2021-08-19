@@ -57,30 +57,73 @@ class MaximumLikelihoodEstimationEngine(Engine):
 
 
     # static : https://wikidocs.net/21054
+    '''??????????? 이거 약간 forward같이 암묵적으로 쓰는 건가?'''
     @staticmethod
     #@profile
-    def train(engine, mini_batch):
+    def train(engine, mini_batch): 
         '''
-            engine : 여기에 Engine을 받나본데? // train engine, valid engine
-            mini_batch : train_loader가 return하는 객체
-                pytorch.DataLoader? 이런 비슷한거 있음.
+            이 매서드 : Engine(MaximumLikelihoodEstimationEngine.train) 이렇게 되는것임.
+            그리고 기폰 format이  ---- def (engind, batch) ---- 로 정의하는것.임
         '''
         # You have to reset the gradients of all model parameters
         # before to take another step in gradient descent.
+        # accumulate gradient update
 
         '''
-            engine.state.iteration ; Number of iterations the engine has completed. Initialized as 0 and the first iteration is 1.
-                https://pytorch.org/ignite/v0.4.6/concepts.html#state
-            engine.iteration_per_update : update당 Iteration 숫자... 먼지 모르겟음.
+        engine.state에는 이것들이 잇음.
+            - iteration: 0
+            - epoch: 0
+            - epoch_length: <class 'NoneType'>
+            - max_epochs: <class 'NoneType'>
+            - output: <class 'NoneType'>
+            - batch: <class 'NoneType'>
+            - metrics: <class 'dict'>
+            - dataloader: <class 'NoneType'>
+            - seed: <class 'NoneType'>
+            - times: <class 'dict'>
+
+        engine.config
+            - 'is_continue': False,
+            - 'model_fn': '.',
+            - 'train': '/Users/rainism/desktop/grad/torch_study/transformer/data/tt.corpus.shuf.train.tok.bpe',
+            - 'valid': '/Users/rainism/desktop/grad/torch_study/transformer/data/tt.corpus.shuf.train.tok.bpe',
+            - 'lang': 'enko',
+            - 'gpu_id': -1,
+            - 'store_true': False,
+            - 'batch_size': 160,
+            - 'n_epochs': 30,
+            - 'verbose': 1,
+            - 'init_epoch': 1,
+            - 'max_length': 100,
+            - 'dropout': 0.2,
+            - 'word_vec_size': 512,
+            - 'hidden_size': 768,
+            - 'n_layers': 4,
+            - 'max_grad_norm': 5.0,
+            - 'iteration_per_update': 1,
+            - 'lr': 1.0,
+            - 'lr_step': 1,
+            - 'lr_gamma': 0.5,
+            - 'lr_decay_start': 10,
+            - 'use_adam': True,
+            - 'rl_lr': 0.01,
+            - 'rl_n_samples': 1,
+            - 'rl_n_epochs': 10,
+            - 'rl_n_gram': 6,
+            - 'rl_reward': 'gleu',
+            - 'use_transformer': False,
+            - 'n_splits': 8        
+
+
         '''
-        # accumulate gradient update
         engine.model.train() # 파라미터 학습 할 것임.
         if engine.state.iteration % engine.config.iteration_per_update == 1 or engine.config.iteration_per_update == 1: # 만약 설정을 config.iteration_per_update 을 1로 했을 경우, 매 iter마다 업데이트, 만약 설정을 10으로 하면 11마다 zero grad함.
-            if engine.state.iteration > 1:
+                # 몇번마다 그래드를 업데이트 할것인지.
+            if engine.state.iteration > 1: # 1일때는?? 제로그래드 안해?
                 engine.optimizer.zero_grad()
 
         device = next(engine.model.parameters()).device # 모델이 어느 gpu에 있는지 따오는거
-        # 현재 모델이 어느 gpu에 있는지 구해서, 미니배치안에 잇는 텐서들을 해당 디바이스에 보내준다.
+            # 현재 모델이 어느 gpu에 있는지 구해서, 미니배치안에 잇는 텐서들을 해당 디바이스에 보내준다.
 
         mini_batch.src = (mini_batch.src[0].to(device), mini_batch.src[1]) # encoder tuple, length // 근데 tuple gpu로 옮기는데 length는 안옮기네
         mini_batch.tgt = (mini_batch.tgt[0].to(device), mini_batch.tgt[1]) # decoder x, y
@@ -96,6 +139,13 @@ class MaximumLikelihoodEstimationEngine(Engine):
             # y의 원래 텐서 모습은 {BOS, y_1, y_2, EOS}이건데, Teacher forcing답안용이기때문에 {y_1, y_2, eos} // 모델에 학습 데이터 들어갈땐 {BOS, y_1, y_2} 들어갈거야.
 
         with autocast(not engine.config.off_autocast):
+            '''
+            Instances of autocast serve as context managers or decorators that allow regions of your script to run in mixed precision.
+            In these regions, CUDA ops run in an op-specific dtype chosen by autocast to improve performance while maintaining accuracy. See the Autocast Op Reference for details.
+            When entering an autocast-enabled region, Tensors may be any type. You should not call .half() on your model(s) or inputs when using autocasting.
+            autocast should wrap only the forward pass(es) of your network, including the loss computation(s). Backward passes under autocast are not recommended. Backward ops run in the same type that autocast used for corresponding forward ops.
+            
+            '''
                 # Take feed-forward
                 # Similar as before, the input of decoder does not have EOS token.
                 # Thus, remove EOS token for decoder input.
@@ -107,9 +157,9 @@ class MaximumLikelihoodEstimationEngine(Engine):
                 y_hat.contiguous().view(-1, y_hat.size(-1)), # flatten
                 y.contiguous().view(-1) # flatten
             )
-
+                #NLLoss
             backward_target = loss.div(y.size(0)).div(engine.config.iteration_per_update) 
-                # NLL을 보면 -1/n *sigma(sgima)인데, Loss정의시 1/n을 안했음. 그래서 직접 나눠줘야함.
+                # NLL의 정의는  -1/n *sigma(sgima)인데, Loss정의시 1/n을 안했음. 그래서 직접 나눠줘야함.
                 # 그래서 미니 배치 사이즈로 나눠주고, 이터레이션 퍼 업데이트로 나눠줌.
 
         # gpu가 있을때 autocast가 수행
@@ -120,7 +170,7 @@ class MaximumLikelihoodEstimationEngine(Engine):
 
         word_count = int(mini_batch.tgt[1].sum())
             # 단어의 갯수를 알아야 로스를 정확하게 구할 수 있음.
-            # 1 : 에는 각 batch별 length가 들어가 있을 것이기 때문에
+            # [1] : 에는 각 batch별 문장의 length가 들어가 있을 것이기 때문에
         p_norm = float(get_parameter_norm(engine.model.parameters())) # parameter norm
         g_norm = float(get_grad_norm(engine.model.parameters())) # gradient norm : 안정적일수록 작아짐.
         '''
@@ -163,7 +213,24 @@ class MaximumLikelihoodEstimationEngine(Engine):
                 engine.model.parameters(),
                 engine.config.max_grad_norm,
             )
+            '''
+                ################ clip_grad_norm 예 ##################
+                max_norm = 5
+                optimizier = torch.optim.Adam(model.parameters(),
+                                                    lr=1e-3,
+                                                    weight_decay=0)
 
+                # you can set it in trainning phase
+
+                optimizer.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
+                optimizer.step()
+            '''
+            '''
+                ??????????????????????????????????????????????????????
+                왜 scaler가 일요하지??
+            '''
             # Take a step of gradient descent.
             # GPU가 있을 경우에, scale을 함.
             if engine.config.gpu_id >= 0 and not engine.config.off_autocast:
@@ -177,7 +244,7 @@ class MaximumLikelihoodEstimationEngine(Engine):
             # if engine.config.use_noam_decay and engine.lr_scheduler is not None:
             #     engine.lr_scheduler.step()
 
-
+        # 왜 단어당 loss로 하는 걸까? -> 단어가 많아지면 당연히 로스가 높아지니 워드 수로 나눠주는게 fair해보인다.
         loss = float(loss / word_count)
             # 단어단 로스를 구할 수 있음.
         ppl = np.exp(loss)
@@ -239,7 +306,7 @@ class MaximumLikelihoodEstimationEngine(Engine):
                 metric_name,
             )
 
-        for metric_name in training_metric_names:
+        for metric_name in training_metric_names: # ['loss', 'ppl', '|param|', '|g_param|'],
             attach_running_average(train_engine, metric_name)
 
         if verbose >= VERBOSE_BATCH_WISE:

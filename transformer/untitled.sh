@@ -166,3 +166,20 @@ cmd : python continue_train.py --load_fn ./models/models.20200906/enko.transform
 ----------------------------------------------------
 - beam_search : 1로 해야함.(아직 beam_search안배움.)
 - 
+
+
+9. cmd
+----------------------------------------------------
+head -n 1 ./corpus.shuf.test.tok.bpe.en : 데이터 뭐있나 확인
+
+- detokenize 하는 법
+head -n 1 ./data/corpus.shuf.test.tok.bpe.en | python ./nlp_preprocessing/detokenizer.py
+
+head -n 5 ./data/corpus.shuf.test.tok.bpe.en | python translate.py --model_fn ./models/enko.dropout-3.ws-512.hs-768.iteration_per_update-2.max_length-100.batch_size-96.30.1.30.-3.67.1.46-4.31.pth --gpu_id -1 --batch_size 2 --beam_size 1 | python ./nlp_preprocessing/detokenizer.py
+																					# en -> ko, dropout :.3,  wordsize = 512, hidden 768, iteration update : 2, batch 96 ==> 192번마다 grad update					# batch:2개로 inference
+																																										# 30번째 epoch
+																																										# train_loss : 1.3
+																																										# train perplexity 3.67
+																																										# validation_loss : 1.46
+																																										# valid perplexity : 4.31
+head -n 5000 | tail -n 5 | ./data/corpus.shuf.test.tok.bpe.en | python translate.py --model_fn ./models/enko.dropout-3.ws-512.hs-768.iteration_per_update-2.max_length-100.batch_size-96.30.1.30.-3.67.1.46-4.31.pth --gpu_id -1 --batch_size 2 --beam_size 1 | python ./nlp_preprocessing/detokenizer.py

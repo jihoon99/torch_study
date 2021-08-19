@@ -242,6 +242,7 @@ def get_model(input_size, output_size, config):
 def get_crit(output_size, pad_index):
     # Default weight for loss equals to 1, but we don't need to get loss for PAD token.
     # Thus, set a weight for PAD to zero.
+    # output_size : is number : |V_t|
     loss_weight = torch.ones(output_size)
         # 패딩이 되어있는곳은 맞춰도 점수를 주고 싶지 않은것.
     '''      ___________
@@ -337,7 +338,7 @@ def main(config, model_weight=None, opt_weight=None):
         # loader는 loader.src.vocab, loader.train_iter.src[0], [1]등을 갖고 있음.
         # input언어의 vocab size, output언어의 vocab size
     model = get_model(input_size, output_size, config)
-    crit = get_crit(output_size, data_loader.PAD)
+    crit = get_crit(output_size, data_loader.PAD) # 얘 이상해
     '''?????????????????????????????????????????????????????'''
 
     # continue_train.py에서 결정되는부분임.
