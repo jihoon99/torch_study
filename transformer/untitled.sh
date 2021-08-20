@@ -183,3 +183,69 @@ head -n 5 ./data/corpus.shuf.test.tok.bpe.en | python translate.py --model_fn ./
 																																										# validation_loss : 1.46
 																																										# valid perplexity : 4.31
 head -n 5000 | tail -n 5 | ./data/corpus.shuf.test.tok.bpe.en | python translate.py --model_fn ./models/enko.dropout-3.ws-512.hs-768.iteration_per_update-2.max_length-100.batch_size-96.30.1.30.-3.67.1.46-4.31.pth --gpu_id -1 --batch_size 2 --beam_size 1 | python ./nlp_preprocessing/detokenizer.py
+
+
+
+
+10. BLEU 구하기 : cmd
+---------------------------------------------------
+정석 : 모든 epoch에 대해 validation의 BLEU를 구하고, 가장 좋은 친구를 test set에 적용함.
+
+- 하지만 200,000문장이라서 BLEU구하는게 힘듦. -> 대략 1,000문장 정도만 해보자.
+	head -n 1000 corpus.shuf.test.tok.bpe.en > ./corpus.shuf.test.tok.bpe.head-1000.en
+	head -n 1000 corpus.shuf.test.tok.bpe.ko > ./corpus.shuf.test.tok.bpe.head-1000.ko
+	head -n 1000 corpus.shuf.valid.tok.bpe.en > ./corpus.shuf.valid.tok.bpe.head-1000.en
+	head -n 1000 corpus.shuf.valid.tok.bpe.ko > ./corpus.shuf.valid.tok.bpe.head-1000.ko
+
+	wc -l ./corpus.shuf.*
+	head -n 1 ./*.head*
+
+- bash
+
+	MODEL_FN = $1
+	GPU_ID = -1
+	BEAM_SIZE = 1
+	TEST_FN = ./corpus.shuf.valid.tok.bpe.head-1000.en
+	REF_FN = ./corpus.shuf.valid.tok.bpe.head-1000.detok.tok.ko
+
+	cat ${TEST_FN} | python ../translate.py --model ${MODEL_FN} --gpu_id ${GPU_ID} --lang enko --beam_size ${BEAM_SIZE} | python ../nlp_preprocessing/detokenizer.py | mecab -O wakati | ./multi-bleu.perl ${REF_FN}
+																																									# 여기 파트가 중요하다. // BLEU들어가기전에 토크나이즈 한번 더 해줘야함.
+																																														# 파이프를 먹여서 multi-bleu에 들어가는데, // 동시에 정답도 알려줘야함.
+
+- 위 bash에 들어가는 REF_FN을 만들어 주자.
+	cat ./corpus.shuf.valid.tok.bpe.head-10000.ko | python ../nlp_preprocessing/detokenizer.py | head -n 2 # 결과물 두개만 확인해 보겠다.
+	cat ./corpus.shuf.valid.tok.bpe.head-10000.ko | python ../nlp_preprocessing/detokenizer.py | mecab -O wakati > ./corpus.shuf.valid.tok.bpe.head-1000.detok.tok.ko
+	tail -n 5 ./corpus.shuf.valid.tok.bpe.head-1000.detok.tok.ko # 확인하게 한다.
+
+
+	cat ./corpus.shuf.valid.tok.bpe.head-1000.en | python ../nlp_preprocessing/detokenize.py | python ../nlp_preprocessing/tokenizer.py > ./corpus.shuf.valid.tok.bpe.head-1000.detok.tok.en
+																									# 영어도 토크나이즈 한번한다.
+	cat ./corpus.shuf.test.tok.bpe.head-1000.ko | python ../nlp_preprocessing/detokenize.py | mecab -O wakati > ./corpus.shuf.test.tok.bpe.head-1000.detok.tok.ko
+	cat ./corpus.shuf.test.tok.bpe.head-1000.en | python ../nlp_preprocessing/detokenize.py | python ../nlp_preprocessing/tokenizer.py > ./corpus.shuf.test.tok.bpe.head-1000.detok.tok.en
+
+
+- 잘 햇는지 확인
+	head -n 1 ./corpus.shuf.*.detok.tok.*
+
+- translate.py 한번 실행
+	head -n 5 ./corpus.shuf.valid.tok.bpe.head-1000.en | python ../translate.py --model_fn ../models/enko.dropout-3.ws-512.hs-768.iteration_per_update-2.max_length-100.batch_size-96.30.1.30.3.67.1.46-4.31.pth --gpu_id -1 --lang enko --beam_size 1
+
+- bleu 구하기 위한 전처리(?)
+	head -n 5 ./corpus.shuf.valid.tok.bpe.head-1000.en | python ../translate.py --model_fn ../models/enko.dropout-3.ws-512.hs-768.iteration_per_update-2.max_length-100.batch_size-96.30.1.30.3.67.1.46-4.31.pth --gpu_id -1 --lang enko --beam_size 1 | python ../nlp_preprocessing/detokenizer.py | mecab -O wakati
+
+- blue 구하기
+	time cat ./corpus.shuf.valid.tok.bpe.head-1000.en | python ../translate.py --model_fn ../models/enko.dropout-3.ws-512.hs-768.iteration_per_update-2.max_length-100.batch_size-96.30.1.30.3.67.1.46-4.31.pth --gpu_id -1 --lang enko --beam_size 1 | python ../nlp_preprocessing/detokenizer.py | mecab -O wakati | ./multi-bleu.perl ./corpus.shuf.valid.tok.bpe.head-1000.detok.tok.ko
+
+
+- bash로 BLEU구하가
+time ./enko_valid.sh ../models/enko.dropout-3.ws-512.hs-768.iteration_per_update-2.max_length-100.batch_size-96.30.1.30.3.67.1.46-4.31.pth
+
+
+- massive_test.py로 모든 모델에 대해서 BLEU구하기
+python massive_test.py --model_fn ../models/models.20200906/enko.transformer.bs-128.max_length-64.dropout-2.hs-768.n_layers-4.iter_per_update-16.random.* --script_fn ./enko_valid.sh
+
+
+
+11. BEAM SEARCH :
+----------------------------------------------
+다른 강의에서는 Transformer등을 가르치지만, BEAM SEARCH는 deploy하기전에 반드시 해야하는 작업중 하나이다.
