@@ -249,3 +249,11 @@ python massive_test.py --model_fn ../models/models.20200906/enko.transformer.bs-
 11. BEAM SEARCH :
 ----------------------------------------------
 다른 강의에서는 Transformer등을 가르치지만, BEAM SEARCH는 deploy하기전에 반드시 해야하는 작업중 하나이다.
+
+seq2seq.py -> beam_search 와 search.py를 살펴보겠다.
+
+1. 인코더 통과  ->  2. BeamSearch초기화 ->  4. Board로 부터 TmpMiniBatch생성 
+ (seq2seq.py)      seq2seq				 /		seq2seq.py의 while문   \
+										/                              \
+						3. 다음 Temp TmpMiniBatch준비					5. 
+							search.py and s2s.py

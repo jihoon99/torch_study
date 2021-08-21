@@ -115,7 +115,17 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
+    '''
+    추론할때나, input feeding을 해줄것이기 때문에, 한스텝씩 들어올거야.
+    h_t_1_tilde : 저번에 예측한 hidden의 정보값. before softmax
+    h_t_1 : h_{t-1} = [h_{t-1}, c_{t-1}]   tuple임. // 전 스텝의 hidden값. //  [n layer, b, h]라는데(?)
+    
+    # |emb_t| = (b, 1, word_vec_size)
+    # |h_t_1_tilde| = (b, 1, h)
+    # |h_t_1| = [(n_l, b, h),(n_l, b, h)] : t-1 시점 전의 모든 히든들..같음 not sure
 
+    return y,h : [b,1,h], [l,b,h],[l,b,h]
+    '''
     def __init__(self, word_vec_size, hidden_size, n_layers=4, dropout_p=.2):
         super(Decoder, self).__init__()
 
@@ -576,28 +586,34 @@ class Seq2Seq(nn.Module):
         h_src, h_0_tgt = self.encoder((emb_src, x_length))
         # |h_src| = (batch_size, length, hidden_size)
         h_0_tgt = self.fast_merge_encoder_hiddens(h_0_tgt)
+            #h_0_tgt[0] : hidden : [L, B, H]
+            #h_0_tgt[1] : cell : [L, B, H]
+        # ------------------------------ 여기까지는 encoder통과시킨것과 똑같음 ----------------------------
 
-        # initialize 'SingleBeamSearchBoard' as many as batch_size
+
+        # 배치 사이즈 만큼 'SingleBeamSearchBoard'Class를 돌아.
+        # SingleBeamSearchBoard는 search.py에 있음.
         boards = [SingleBeamSearchBoard(
             h_src.device,
             {
                 'hidden_state': {
-                    'init_status': h_0_tgt[0][:, i, :].unsqueeze(1),
-                    'batch_dim_index': 1,
+                    'init_status': h_0_tgt[0][:, i, :].unsqueeze(1), # unsqueeze를 하는 이유 : 하나의 i만 가져와서 3차원 텐서가 2차원이 된다. 따라서 다시 되돌려줄 필요가 있음.
+                    'batch_dim_index': 1, # 배치 디맨션을 알아야함. 왜냐하면 밑에 틸다는 배치의 순서가 다름.
                 }, # |hidden_state| = (n_layers, batch_size, hidden_size)
                 'cell_state': {
                     'init_status': h_0_tgt[1][:, i, :].unsqueeze(1),
                     'batch_dim_index': 1,
                 }, # |cell_state| = (n_layers, batch_size, hidden_size)
                 'h_t_1_tilde': {
-                    'init_status': None,
+                    'init_status': None, # 맨처음 init_status는 None임.
                     'batch_dim_index': 0,
                 }, # |h_t_1_tilde| = (batch_size, 1, hidden_size)
             },
             beam_size=beam_size,
             max_length=max_length,
         ) for i in range(batch_size)]
-        is_done = [board.is_done() for board in boards]
+
+        is_done = [board.is_done() for board in boards] # 각 샘플별 done 카운트, [0,1,0,1,0,...] 배치 사이즈 만큼 bords들이 있음.
 
         length = 0
         # Run loop while sum of 'is_done' is smaller than batch_size, 
@@ -617,7 +633,8 @@ class Seq2Seq(nn.Module):
             for i, board in enumerate(boards):
                 # Batchify if the inference for the sample is still not finished.
                 if board.is_done() == 0:
-                    y_hat_i, prev_status = board.get_batch()
+                        # 보드가 안끝낫다면 -> 보드가 끝난애들은 안보냄.
+                    y_hat_i, prev_status = board.get_batch()   # [beam, 1], {hidden_state, cell_state, h_t_1_tilde}
                     hidden_i    = prev_status['hidden_state']
                     cell_i      = prev_status['cell_state']
                     h_t_tilde_i = prev_status['h_t_1_tilde']
@@ -625,8 +642,9 @@ class Seq2Seq(nn.Module):
                     fab_input  += [y_hat_i]
                     fab_hidden += [hidden_i]
                     fab_cell   += [cell_i]
-                    fab_h_src  += [h_src[i, :, :]] * beam_size
-                    fab_mask   += [mask[i, :]] * beam_size
+                    fab_h_src  += [h_src[i, :, :]] * beam_size # this is encoder part,, 어텐션을 위한것임.
+                    # 하나의 샘플을 다섯번 늘린것. 결론적으로 5*BatchSize될것임.
+                    fab_mask   += [mask[i, :]] * beam_size # this is encoder part,,
                     if h_t_tilde_i is not None:
                         fab_h_t_tilde += [h_t_tilde_i]
                     else:
@@ -646,14 +664,19 @@ class Seq2Seq(nn.Module):
             # |fab_h_src|     = (current_batch_size, length, hidden_size)
             # |fab_mask|      = (current_batch_size, length)
             # |fab_h_t_tilde| = (current_batch_size, 1, hidden_size)
+            #----------------------- 여기까지가 가짜 미니배치를 만든것... -------------------------
 
-            emb_t = self.emb_dec(fab_input)
+
+
+
+            emb_t = self.emb_dec(fab_input) # emb_dec : [output_size] - > [word_vec_size]
             # |emb_t| = (current_batch_size, 1, word_vec_size)
 
             fab_decoder_output, (fab_hidden, fab_cell) = self.decoder(emb_t,
                                                                       fab_h_t_tilde,
                                                                       (fab_hidden, fab_cell))
-            # |fab_decoder_output| = (current_batch_size, 1, hidden_size)
+                # |fab_decoder_output| = (current_batch_size, 1, hidden_size)
+                # fab_hidden, fab_cell = [L, B, hs]
             context_vector = self.attn(fab_h_src, fab_decoder_output, fab_mask)
             # |context_vector| = (current_batch_size, 1, hidden_size)
             fab_h_t_tilde = self.tanh(self.concat(torch.cat([fab_decoder_output,
@@ -663,6 +686,8 @@ class Seq2Seq(nn.Module):
             y_hat = self.generator(fab_h_t_tilde)
             # |y_hat| = (current_batch_size, 1, output_size)
 
+
+            # ------------------ 이제 찢어줘야함 ------------------------
             # separate the result for each sample.
             # fab_hidden[:, begin:end, :] = (n_layers, beam_size, hidden_size)
             # fab_cell[:, begin:end, :]   = (n_layers, beam_size, hidden_size)
@@ -670,6 +695,7 @@ class Seq2Seq(nn.Module):
             cnt = 0
             for board in boards:
                 if board.is_done() == 0:
+                        # 보드가 끝낸애들은 보내지 않음.
                     # Decide a range of each sample.
                     begin = cnt * beam_size
                     end = begin + beam_size
