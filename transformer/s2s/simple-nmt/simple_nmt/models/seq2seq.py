@@ -714,6 +714,7 @@ class Seq2Seq(nn.Module):
             is_done = [board.is_done() for board in boards]
             length += 1
 
+        # --------------------while 끝남 ---------------------
         # pick n-best hypothesis.
         batch_sentences, batch_probs = [], []
 

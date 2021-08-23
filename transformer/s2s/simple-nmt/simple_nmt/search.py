@@ -84,7 +84,7 @@ class SingleBeamSearchBoard():
         # In fact, we represent this as log-probability, which is negative value.
         # Thus, we need to multiply bigger penalty for shorter one.
         p = ((min_length + 1) / (min_length + length))**alpha
-
+        # 6/(5+1)
         return p
 
 
@@ -179,7 +179,7 @@ class SingleBeamSearchBoard():
         self.masks += [torch.eq(self.word_indice[-1], data_loader.EOS)] # Set finish mask if we got EOS.
             # torch equal (word_indice[-1], data_loader.EOS) -> 1 if it is, else 0
         # Calculate a number of finished beams.
-        self.done_cnt += self.masks[-1].float().sum() # EOS가 몇개 있엇는지 더함.
+        self.done_cnt += self.masks[-1].float().sum() # EOS가 몇개 있엇는지 확인
 
         # In beam search procedure, we only need to memorize latest status.
         # For seq2seq, it would be lastest hidden and cell state, and h_t_tilde.
@@ -191,19 +191,39 @@ class SingleBeamSearchBoard():
         for prev_status_name, prev_status in prev_status.items():
             self.prev_status[prev_status_name] = torch.index_select(
                 prev_status,
-                dim=self.batch_dims[prev_status_name],
-                index=self.beam_indice[-1]
+                dim=self.batch_dims[prev_status_name], # 어떤 차원을 뽑아올지
+                index=self.beam_indice[-1] # 정해진 dim에서 몇번째 데이터를 뽑아올지.
             ).contiguous()
 
+
+
+
+
+
     def get_n_best(self, n=1, length_penalty=.2):
+        '''
+        output : 최고의 확률을 갖는 5개를 선별하고, 
+        sentences와 probs를 return한다.
+
+        sentences : [[2021, 3, 1394, ...],
+                    [3019, ,20, 391, ...],
+                    ...
+                    [1010, 50, 0203, ...]]
+
+        probs : [0.3, 0.5, 0.1, 0.3, 0.4]
+
+        '''
+
         sentences, probs, founds = [], [], []
 
-        for t in range(len(self.word_indice)):  # for each time-step,
-            for b in range(self.beam_size):  # for each beam,
-                if self.masks[t][b] == 1:  # if we had EOS on this time-step and beam,
+        for t in range(len(self.word_indice)):  # for each time-step,,,
+            # word_indice : [[0,0,0,0,0],[1,0,0,0,0],[1,0,0,0,0],...]
+            for b in range(self.beam_size):  # for each beam, // 5번
+                if self.masks[t][b] == 1:  # if we had EOS on this time-step and beam, EOS를 찾으면,
                     # Take a record of penaltified log-proability.
                     probs += [self.cumulative_probs[t][b] * self.get_length_penalty(t, alpha=length_penalty)]
-                    founds += [(t, b)]
+                    founds += [(t, b)] # 어디서 EOS를 찾았는지 -> 그 확률이 어떻게 되나 나중에 역추적할라고
+                    # 재수가 없으면 EOS없이 max len으로 끝날수 있음.
 
         # Also, collect log-probability from last time-step, for the case of EOS is not shown.
         for b in range(self.beam_size):
@@ -227,7 +247,7 @@ class SingleBeamSearchBoard():
             # Trace from the end.
             for t in range(end_index, 0, -1):
                 sentence = [self.word_indice[t][b]] + sentence
-                b = self.beam_indice[t][b]
+                b = self.beam_indice[t][b] # 빔따라서 거꾸로 올라감.
 
             sentences += [sentence]
             probs += [prob]
