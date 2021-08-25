@@ -200,6 +200,7 @@ class SingleBeamSearchBoard():
 
 
 
+
     def get_n_best(self, n=1, length_penalty=.2):
         '''
         output : 최고의 확률을 갖는 5개를 선별하고, 
