@@ -11,21 +11,30 @@ class Attention(nn.Module):
         super().__init__()
 
         self.softmax = nn.Softmax(dim=-1)
+            # K,V의 n에 대해서 softmax를 하는것임. 즉 참조할 부분(encoder)을 확률적으로 표현
 
     def forward(self, Q, K, V, mask=None, dk=64):
+
         # |Q| = (batch_size, m, hidden_size)
+            # |Q| = (n_head * bs, m, hs/n_heads)
         # |K| = |V| = (batch_size, n, hidden_size)
         # |mask| = (batch_size, m, n)
+            # |mask| = (n_head * bs, m, n)
 
         w = torch.bmm(Q, K.transpose(1, 2))
+            # [bs, m, hs] * [bs, hs, n]
         # |w| = (batch_size, m, n)
+            # s2s생각해보면, decoder에서 |w| = (bs, 1, hs)를 갖고 어텐션을 순차적으로 했었어,
+            # 반면, attn에서는 한방에 한다. 모든 m에 대하여 한방에 하니까 속도는 빠르되, 메모리가 많이 필요함.
         if mask is not None:
             assert w.size() == mask.size()
             w.masked_fill_(mask, -float('inf'))
 
-        w = self.softmax(w / (dk**.5))
+        w = self.softmax(w / (dk**.5)) # 스케일을 해주면 학습할때 좀더 안정적임.
+            # 확률 분포 자체가 좀더 flat해짐.
         c = torch.bmm(w, V)
-        # |c| = (batch_size, m, hidden_size)
+            # [bs, m, n] * [bs, n, hs]
+        # |c| = (batch_size, m, hidden_size) -> 밖에서 기준으로는 |c| = (n_splits * bs, m, hs/splits)
 
         return c
 
@@ -47,12 +56,18 @@ class MultiHead(nn.Module):
         self.attn = Attention()
 
     def forward(self, Q, K, V, mask=None):
+        '''
+        디코더의 self attn 같은 경우에는 미래를 보지 못하게 하는 mask가 필요함.
+        인코더에는 <PAD>마스크를 함.
+        '''
         # |Q|    = (batch_size, m, hidden_size)
         # |K|    = (batch_size, n, hidden_size)
         # |V|    = |K|
         # |mask| = (batch_size, m, n)
 
         QWs = self.Q_linear(Q).split(self.hidden_size // self.n_splits, dim=-1)
+            # 결과물 : list - number of heads
+            # QWs[0]이런식으로 꺼내 쓰면 된다.
         KWs = self.K_linear(K).split(self.hidden_size // self.n_splits, dim=-1)
         VWs = self.V_linear(V).split(self.hidden_size // self.n_splits, dim=-1)
         # |QW_i| = (batch_size, m, hidden_size / n_splits)
@@ -61,6 +76,7 @@ class MultiHead(nn.Module):
         # By concatenating splited linear transformed results,
         # we can remove sequential operations,
         # like mini-batch parallel operations.
+            # 피피티에서 설명했듯, 헤드를 배치로 바꿈.
         QWs = torch.cat(QWs, dim=0)
         KWs = torch.cat(KWs, dim=0)
         VWs = torch.cat(VWs, dim=0)
@@ -69,7 +85,8 @@ class MultiHead(nn.Module):
 
         if mask is not None:
             mask = torch.cat([mask for _ in range(self.n_splits)], dim=0)
-            # |mask| = (batch_size * n_splits, m, n)
+            # |mask| = (batch_size, m, n) -> (batch_size * n_splits, m, n)
+            # mask는 반복되는거라서,, 그냥 연장하나보다.
 
         c = self.attn(
             QWs, KWs, VWs,
@@ -80,6 +97,8 @@ class MultiHead(nn.Module):
 
         # We need to restore temporal mini-batchfied multi-head attention results.
         c = c.split(Q.size(0), dim=0)
+            # Q.size = batch_size
+            # c.split하면  [bs * n_splits, m, hs/n_splits] -> [bs, m, hs/n_splits]
         # |c_i| = (batch_size, m, hidden_size / n_splits)
         c = self.linear(torch.cat(c, dim=-1))
         # |c| = (batch_size, m, hidden_size)
@@ -88,7 +107,14 @@ class MultiHead(nn.Module):
 
 
 class EncoderBlock(nn.Module):
+    '''
+        Encoder block은 MySequential을 통해서 쌓을거야.
+        원본 논문 : Residual하고, LayerNorm한다.
+        하지만 우리는 : LayerNorm -> Multihead -> Residual 할것이다.
 
+        순서 : x -> layerNorm -> Multihead -> dropout -> Residual -> layerNorm -> FFN -> Residual
+
+    '''
     def __init__(
         self,
         hidden_size,
@@ -102,6 +128,7 @@ class EncoderBlock(nn.Module):
         self.attn_norm = nn.LayerNorm(hidden_size)
         self.attn_dropout = nn.Dropout(dropout_p)
 
+        # FFN을 하는데 -> 늘렷다가 줄이는 FFN
         self.fc = nn.Sequential(
             nn.Linear(hidden_size, hidden_size * 4),
             nn.LeakyReLU() if use_leaky_relu else nn.ReLU(),
@@ -134,7 +161,14 @@ class EncoderBlock(nn.Module):
 
 
 class DecoderBlock(nn.Module):
+    '''
+        decoderblock은 attn이 두개의 종류를 갖는다.
 
+        1. self attn
+        2. encoder와 하는 일반적인 attn
+
+    
+    '''
     def __init__(
         self,
         hidden_size,
@@ -144,11 +178,11 @@ class DecoderBlock(nn.Module):
     ):
         super().__init__()
 
-        self.masked_attn = MultiHead(hidden_size, n_splits)
+        self.masked_attn = MultiHead(hidden_size, n_splits) # self attn
         self.masked_attn_norm = nn.LayerNorm(hidden_size)
         self.masked_attn_dropout = nn.Dropout(dropout_p)
 
-        self.attn = MultiHead(hidden_size, n_splits)
+        self.attn = MultiHead(hidden_size, n_splits) # normal attn
         self.attn_norm = nn.LayerNorm(hidden_size)
         self.attn_dropout = nn.Dropout(dropout_p)
 
@@ -161,15 +195,32 @@ class DecoderBlock(nn.Module):
         self.fc_dropout = nn.Dropout(dropout_p)
 
     def forward(self, x, key_and_value, mask, prev, future_mask):
-        # |key_and_value| = (batch_size, n, hidden_size)
-        # |mask|          = (batch_size, m, n)
+        # |key_and_value| = (batch_size, n, hidden_size) : 인코더의 아웃풋.
+        # |mask|          = (batch_size, m, n) : sorce <PAD> masking
 
         # In case of inference, we don't have to repeat same feed-forward operations.
         # Thus, we save previous feed-forward results.
-        if prev is None: # Training mode
+        if prev is None: # Training mode : Teacher Forcing
             # |x|           = (batch_size, m, hidden_size)
             # |prev|        = None
             # |future_mask| = (batch_size, m, m)
+            '''
+                     --- --- --- ---
+                    |   |||||||||||||
+                     --- --- --- ---
+                    |   |   |||||||||
+                     --- --- --- ---
+                    |   |   |   |||||
+                     --- --- --- ---
+                    |   |   |   |   |
+                     --- --- --- ---
+
+            c = torch.bmm(w, V)
+                # [bs, m, n] * [bs, n, hs]
+
+            마스킹 된 부분은 softmax후 0이 되니까 mask안된 부분만 반영이 됨.
+            
+            '''
             # |z|           = (batch_size, m, hidden_size)
 
             # Post-LN:
@@ -182,9 +233,12 @@ class DecoderBlock(nn.Module):
             z = x + self.masked_attn_dropout(
                 self.masked_attn(z, z, z, mask=future_mask)
             )
-        else: # Inference mode
+        else: # Inference mode : AutoRegressive한 작업임.
+                # 추론문일 때는 한 타임 스탭씩 진행해야 한다.
+                # prev는 beam_search할때 언급했는데,, 모든 타임 스텝의 hidden을 갖고 있어야한다고 했음. 이때 모든 타임 스탭의 히든이 prev임.
+                # 즉 prev가 있으면 추론모드임.
             # |x|           = (batch_size, 1, hidden_size)
-            # |prev|        = (batch_size, t - 1, hidden_size)
+            # |prev|        = (batch_size, t - 1, hidden_size) : t 이전 input의 모든 attn 결과값을 갖고 있음.
             # |future_mask| = None
             # |z|           = (batch_size, 1, hidden_size)
 
@@ -197,7 +251,7 @@ class DecoderBlock(nn.Module):
             normed_prev = self.masked_attn_norm(prev)
             z = self.masked_attn_norm(x)
             z = x + self.masked_attn_dropout(
-                self.masked_attn(z, normed_prev, normed_prev, mask=None)
+                self.masked_attn(z, normed_prev, normed_prev, mask=None) # mask를 None으로 한 이유는, 어차피 input에 미래가 없기 때문이다.
             )
 
         # Post-LN:
@@ -212,7 +266,8 @@ class DecoderBlock(nn.Module):
                                             K=normed_key_and_value,
                                             V=normed_key_and_value,
                                             mask=mask))
-        # |z| = (batch_size, m, hidden_size)
+        # |z| = (batch_size, m, hidden_size) 왜 z에서 m이지?
+
 
         # Post-LN:
         # z = self.fc_norm(z + self.fc_dropout(self.fc(z)))
@@ -222,10 +277,17 @@ class DecoderBlock(nn.Module):
         # |z| = (batch_size, m, hidden_size)
 
         return z, key_and_value, mask, prev, future_mask
+            # 이 입력을 위의 블록에서 고대로 받아서 똑같은 행위를 함. : 출력이랑 입력이랑 같음.
 
 
 class MySequential(nn.Sequential):
+    '''
+    nn.Sequential만 상속 받아서 forward만 갈아 엎음.
 
+    *x같은 경우 x,key_and_value,mask,prev,future_mask같은 tuple이 들어갈거야.
+    '''
+
+        # *args : 파라미터를 몇개를 받을지 모르는 경우 사용, args는 튜플 형태로 전달.
     def forward(self, *x):
         # nn.Sequential class does not provide multiple input arguments and returns.
         # Thus, we need to define new class to solve this issue.
@@ -266,8 +328,11 @@ class Transformer(nn.Module):
         self.emb_dec = nn.Embedding(output_size, hidden_size)
         self.emb_dropout = nn.Dropout(dropout_p)
 
+        # positioning Encoding : 미리 계산해놓음.. 엄청 큰 메트릭을 만들고, 필요한 만큼 꺼내 쓰면됨.
         self.pos_enc = self._generate_pos_enc(hidden_size, max_length)
 
+
+        # nn.Sequential을 안쓰는 이유는,, source를 보면, forward(self, input)임. 이때 input으로 단일만 받고 tuple을 받지 못한다.
         self.encoder = MySequential(
             *[EncoderBlock(
                 hidden_size,
@@ -285,13 +350,24 @@ class Transformer(nn.Module):
               ) for _ in range(n_dec_blocks)],
         )
         self.generator = nn.Sequential(
-            nn.LayerNorm(hidden_size), # Only for Pre-LN Transformer.
+            nn.LayerNorm(hidden_size), # Only for Pre-LN Transformer. -> decoder에서 나오자마자 LN이 필요함.
             nn.Linear(hidden_size, output_size),
             nn.LogSoftmax(dim=-1),
+                # https://junstar92.tistory.com/118 : log_softmax
         )
 
     @torch.no_grad()
     def _generate_pos_enc(self, hidden_size, max_length):
+        '''
+        positioning encoding을 만들어 주는 함수.
+
+        예) pos = 3(word) // dim_idx = 2 = 2*i
+            
+                        pos
+            sin(  --------------- )
+                    10^4(2*i/d)
+
+        '''
         enc = torch.FloatTensor(max_length, hidden_size).zero_()
         # |enc| = (max_length, hidden_size)
 
@@ -305,6 +381,9 @@ class Transformer(nn.Module):
 
         return enc
 
+
+
+
     def _position_encoding(self, x, init_pos=0):
         # |x| = (batch_size, n, hidden_size)
         # |self.pos_enc| = (max_length, hidden_size)
@@ -317,8 +396,14 @@ class Transformer(nn.Module):
 
         return x
 
+
+
     @torch.no_grad()
     def _generate_mask(self, x, length):
+        '''
+        
+        에) length : [4,3,2]
+        '''
         mask = []
 
         max_length = max(length)
@@ -339,13 +424,20 @@ class Transformer(nn.Module):
 
         return mask
 
+
+
     def forward(self, x, y):
+        '''
+        우리는 teacher forcing이니까,, x,y둘다 들어와야함.
+            x는 packed_sequence가 들어옴.
+        출력은 logSoftmax.
+        '''
         # |x[0]| = (batch_size, n)
         # |y|    = (batch_size, m)
 
         # Mask to prevent having attention weight on padding position.
         with torch.no_grad():
-            mask = self._generate_mask(x[0], x[1])
+            mask = self._generate_mask(x[0], x[1]) # x[0] : one hot encoding, x[1] : sequence_length
             # |mask| = (batch_size, n)
             x = x[0]
 
