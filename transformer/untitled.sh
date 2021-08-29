@@ -257,3 +257,34 @@ seq2seq.py -> beam_search 와 search.py를 살펴보겠다.
 										/                              \
 						3. 다음 Temp TmpMiniBatch준비					5. 
 							search.py and s2s.py
+
+
+
+
+
+12. TRANSFORMER : 
+-----------------------------------------------
+12-1. build model
+12-2. Train.pyd에서 trainer짜기.
+	post-layer-Normalization을 했을때는, warm-up lr 을 했어야했는데,
+	pre-layerNormalization을 하면서는 그럴필요가 없어(?) -> 따라서 trainer.py에 MaximumLikelihoodEstimationEngine을 수정하지 않아도됨.
+	다만, train.py, translate.py에서는 고쳐야 할 부분들이 있음.
+		
+		train.py - p.add_argument 에서 RAdam, transofrmer, n_splits쓸지 정하는 아규먼트들을 추가해줘야함.														adam을 썻을 경우 lr 필요없고(경험), SGD경우 필요
+				 - main에서 하는것, : config를 받아																												/
+				 					Data Loading -> get model(transformer) -> get crit		->		 get optimizer					->				  lr_scheduler      ->     train(n_epochs)(trainer.py)
+									 											  \						/      \										/
+																				   from continue_train.py       if use adam, if use radam, if use SGD
+																				   if model_weight is not None    adam, radam을 쓰면 opt_weight를 불러옴.(뭐였지..)
+																				   if gpu						  SGD를 쓰면 max grad를 써서 gradient cliping을 해야함.
+																				   								  adam, radam을 쓸때는 1e8을 쓰면됨.(gradient clipping 안하겠다.)
+																				   								  SGD를 하겠다 하면, 5를 추천. gradient의 norm이 5보다 작을때 클립핑해라
+
+12-3. cmd : python train.py --train ./data/corpus.shuf.train.tok.bpe --valid ./data/corpus.shuf.valid.tok.bpe --lang enko --gpu_id 1 --batch_size 128 --n_epochs 30 --max_length 64 --dropout .2 --hidden_size 768 --n_layers 4 --max_grad_norm 1e+8 --iteration_per_update 32 --lr 1e-3 --lr_step 0 --use_adam --rl_n_epochs 0 --use_transformer --model_fn ./models/enko.transformer.bs-128.max_length-64.dropout-2.hs-768.n_layers-4.iter_per_update-32.adam.pth
+
+
+
+12-4 transformer.py -> search(추론하자)
+-----------------------------------------------
+
+

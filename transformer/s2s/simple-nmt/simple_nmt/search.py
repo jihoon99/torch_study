@@ -25,6 +25,11 @@ class SingleBeamSearchBoard():
         beam_size=5,
         max_length=255,
     ):
+        '''
+        init에 previous_status를 저장함. -> prev_status
+        
+
+        '''
         self.beam_size = beam_size
         self.max_length = max_length
 
@@ -32,13 +37,12 @@ class SingleBeamSearchBoard():
         self.device = device
         # Inferred word index for each time-step. For now, initialized with initial time-step. 첫번째니까 빔 사이즈 만큼 모두 BOS가 들어가야함.
         self.word_indice = [torch.LongTensor(beam_size).zero_().to(self.device) + data_loader.BOS]
-            # [[0,0,0,0,0],
-            #  [1,0,0,0,0],
-            #  ...]
+            # [tensor([0,0,0,0,0])]
+            # 추후에 tensor([1,0,0,0,0]) 이런게 쌓임.
         # Beam index for selected word index, at each time-step. 빔 사이즈 만큼 -1을 채워넣은 텐서
         self.beam_indice = [torch.LongTensor(beam_size).zero_().to(self.device) - 1]
         # Cumulative log-probability for each beam. 
-        self.cumulative_probs = [torch.FloatTensor([.0] + [-float('inf')] * (beam_size - 1)).to(self.device)]
+        self.cumulative_probs = [torch.FloatTensor([.0] + [-float('inf')]*(beam_size - 1)).to(self.device)]
             # 처음 cumulative_probs에서 [0, -inf, -inf, -inf, -inf]로 하고싶음. 왜냐면 BOS는 확정적인거라 1의 확률을 갖는데 log(BOS) = 0임.
             # 가지가 분할하기 전에는 한개의 확률만 갖으므로 나머지는 -inf로 채움.
             # 첫번째 빔에서(0)만 5개의 후보가 뽑힐거야
@@ -59,12 +63,12 @@ class SingleBeamSearchBoard():
             if init_status is not None:
                 self.prev_status[prev_status_name] = torch.cat([init_status] * beam_size,
                                                                dim=batch_dim_index)
-                    # hidden, cell :  [L, B*beam_size, H] 여기서 B는 1임.
+                    # s2s - hidden, cell :  [L, B*beam_size, H] 여기서 B는 1임.
             else:
                 self.prev_status[prev_status_name] = None
-                    # h_tilde : [B*beam, 1, hidden]
+                    # s2s - h_tilde : [B*beam, 1, hidden]
             self.batch_dims[prev_status_name] = batch_dim_index
-                # {hidden_state : 1, ...}
+                # s2s - {hidden_state : 1, ...}
         self.current_time_step = 0
         self.done_cnt = 0
 
@@ -108,7 +112,7 @@ class SingleBeamSearchBoard():
                 [baem_size, L, H] : prev_state_i  = 이거 튜플임.
         '''
         y_hat = self.word_indice[-1].unsqueeze(-1)
-            # word_indice : 5(beamSize) 이전 타임 스탭의 출력물을 가져옴. -> unsqueeze(-1)
+            # word_indice : tensor([0,0,0,0,0]) 이전 타임 스탭의 출력물을 가져옴. -> unsqueeze(-1) : [5,1]
         # |y_hat| = (beam_size, 1)
         # if model != transformer:
         #     |hidden| = |cell| = (n_layers, beam_size, hidden_size)

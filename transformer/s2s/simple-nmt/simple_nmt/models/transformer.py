@@ -360,6 +360,7 @@ class Transformer(nn.Module):
     def _generate_pos_enc(self, hidden_size, max_length):
         '''
         positioning encoding을 만들어 주는 함수.
+        return [max_length, hs]
 
         예) pos = 3(word) // dim_idx = 2 = 2*i
             
@@ -387,12 +388,24 @@ class Transformer(nn.Module):
     def _position_encoding(self, x, init_pos=0):
         # |x| = (batch_size, n, hidden_size)
         # |self.pos_enc| = (max_length, hidden_size)
+        # return [bs, n, hs]
+        '''
+        init_pos가 필요한 이유
+
+        학습할때는 괜찮아 전체 n이 한번에 들어오니까
+        문제는 추론할때 한 단어씩 들어옴.. -> init_pos로 잘라줘야함.
+         --- --- --- ---
+        |   |   |   |   |
+         --- --- --- ---
+        한번에 한줄(단어)씩 들어옴. [bs, 1, hs]
+        '''
         assert x.size(-1) == self.pos_enc.size(-1)
         assert x.size(1) + init_pos <= self.max_length
 
+
         pos_enc = self.pos_enc[init_pos:init_pos + x.size(1)].unsqueeze(0)
         # |pos_enc| = (1, n, hidden_size)
-        x = x + pos_enc.to(x.device)
+        x = x + pos_enc.to(x.device) # broadcasting되어 batch에 다 더해질거야.
 
         return x
 
@@ -442,19 +455,37 @@ class Transformer(nn.Module):
             x = x[0]
 
             mask_enc = mask.unsqueeze(1).expand(*x.size(), mask.size(-1))
+            '''
+                mask : shape - [b, n]
+                    -> unsqueeze(1) -> [b,1,n]
+                    -> expand([b,n], n)            
+            '''
             mask_dec = mask.unsqueeze(1).expand(*y.size(), mask.size(-1))
+                # expand는 1인 차원을(unsqueeze) 복사해서 늘려줘
             # |mask_enc| = (batch_size, n, n)
             # |mask_dec| = (batch_size, m, n)
 
         z = self.emb_dropout(self._position_encoding(self.emb_enc(x)))
-        z, _ = self.encoder(z, mask_enc)
-        # |z| = (batch_size, n, hidden_size)
+        z, _ = self.encoder(z, mask_enc) # return z and mask
+        # |z| = (batch_size, n, hidden_size) -> 디코더는 얘에 대해서 attn을 하면 된다.
+            # encoder 의 mask_enc는 EncoderBlock의 forward로 맵핑됨.
+            # mask는 [batch_size, n, n] 처럼 생겼는데
+            #   --- --- --- ---
+            #  | T | T | T | F |
+            #  | T | T | T | F |
+            #  | T | T | T | F |
+            #  | T | T | T | F | 
+            #   --- --- --- --- 
+            # 이런식으로 일괄적으로 생겼음
 
-        # Generate future mask
+        # Generate future mask - 미래 못보게 하는 mask생성
         with torch.no_grad():
-            future_mask = torch.triu(x.new_ones((y.size(1), y.size(1))), diagonal=1).bool()
+            # 대각행렬 위쪽만 True로 표시하는 메트릭이 필요.
+            future_mask = torch.triu(x.new_ones((y.size(1), y.size(1))), diagonal=1).bool() # triangle upper
+                # y.size(1) = m  ; m*m 행렬을 만드는데 대각은 1로 채움.
             # |future_mask| = (m, m)
             future_mask = future_mask.unsqueeze(0).expand(y.size(0), *future_mask.size())
+                # bs * [m,m] : 배치만큼 복사해서 늘림.
             # |fwd_mask| = (batch_size, m, m)
 
         h = self.emb_dropout(self._position_encoding(self.emb_dec(y)))
@@ -466,29 +497,43 @@ class Transformer(nn.Module):
 
         return y_hat
 
+
+
+
+    # 추론해보자.
     def search(self, x, is_greedy=True, max_length=255):
+
+        '''
+        is_greedy : 가장 높은 확률로 when it is True
+
+        
+        '''
         # |x[0]| = (batch_size, n)
         batch_size = x[0].size(0)
 
         mask = self._generate_mask(x[0], x[1])
+            # mask생성, encoder의 <PAD>마스크
         # |mask| = (batch_size, n)
         x = x[0]
 
         mask_enc = mask.unsqueeze(1).expand(mask.size(0), x.size(1), mask.size(-1))
         mask_dec = mask.unsqueeze(1)
         # |mask_enc| = (batch_size, n, n)
-        # |mask_dec| = (batch_size, 1, n)
+        # |mask_dec| = (batch_size, 1, n) - 하나씩 차례로 들어갈거라 하나만 필요함.
 
         z = self.emb_dropout(self._position_encoding(self.emb_enc(x)))
         z, _ = self.encoder(z, mask_enc)
-        # |z| = (batch_size, n, hidden_size)
+        # |z| = (batch_size, n, hidden_size) - 여기다가 dec 어센션을 할거야.
 
         # Fill a vector, which has 'batch_size' dimension, with BOS value.
         y_t_1 = x.new(batch_size, 1).zero_() + data_loader.BOS
         # |y_t_1| = (batch_size, 1)
         is_decoding = x.new_ones(batch_size, 1).bool()
 
-        prevs = [None for _ in range(len(self.decoder._modules) + 1)]
+        prevs = [None for _ in range(len(self.decoder._modules) + 1)] 
+            # 이전 타임스탭의 결과물들을 넣어놓을거야.
+            # Decoder블락 수만큼 빈 공간을 만들어.
+            # +1을 한 이유는, input까지 고려한것
         y_hats, indice = [], []
         # Repeat a loop while sum of 'is_decoding' flag is bigger than 0,
         # or current time-step is smaller than maximum length.
@@ -498,18 +543,21 @@ class Transformer(nn.Module):
             h_t = self.emb_dropout(
                 self._position_encoding(self.emb_dec(y_t_1), init_pos=len(indice))
             )
-            # |h_t| = (batch_size, 1, hidden_size))
+            # |h_t| = (batch_size, 1, hidden_size)) - 1인 이유는 emb_dec(y_t_1)의 쉐입이 [b,1,hs]이기 때문이다.
             if prevs[0] is None:
                 prevs[0] = h_t
+                    # 처음 하는 거라면, 한개의 스텝에 대해서만 어텐션을 할 것임.
             else:
                 prevs[0] = torch.cat([prevs[0], h_t], dim=1)
+                    # 두번째 이후라면, 전에것과 지금것을 합쳐서 어텐션을 수행할건가봐...
 
-            for layer_index, block in enumerate(self.decoder._modules.values()):
+            for layer_index, block in enumerate(self.decoder._modules.values()): # layer를 하나씩 배출함.
                 prev = prevs[layer_index]
                 # |prev| = (batch_size, len(y_hats), hidden_size)
-
+                    
                 h_t, _, _, _, _ = block(h_t, z, mask_dec, prev, None)
-                # |h_t| = (batch_size, 1, hidden_size)
+                    # x, key_and_value, mask, prev, future_mask
+                # |h_t| = (batch_size, 1, hidden_size) - 이번 레이어의 결과값.
 
                 if prevs[layer_index + 1] is None:
                     prevs[layer_index + 1] = h_t
@@ -517,10 +565,12 @@ class Transformer(nn.Module):
                     prevs[layer_index + 1] = torch.cat([prevs[layer_index + 1], h_t], dim=1)
                 # |prev| = (batch_size, len(y_hats) + 1, hidden_size)
 
-            y_hat_t = self.generator(h_t)
+            y_hat_t = self.generator(h_t) 
+                # 확률 분포를 얻을 수 있지
+                # h_t 는 배치당, 하나의 word가 들어갔을때 예측한 결과물임.
             # |y_hat_t| = (batch_size, 1, output_size)
 
-            y_hats += [y_hat_t]
+            y_hats += [y_hat_t] # 나중에 torch.cat(y_hats, dim = 1)로 할거야.
             if is_greedy: # Argmax
                 y_t_1 = torch.topk(y_hat_t, 1, dim=-1)[1].squeeze(-1)
             else: # Random sampling                
@@ -569,6 +619,8 @@ class Transformer(nn.Module):
         z = self.emb_dropout(self._position_encoding(self.emb_enc(x)))
         z, _ = self.encoder(z, mask_enc)
         # |z| = (batch_size, n, hidden_size)
+        # --------------------여기까지 search 함수와 똑같음 --------------------------
+
 
         prev_status_config = {}
         for layer_index in range(n_dec_layers + 1):
@@ -578,11 +630,11 @@ class Transformer(nn.Module):
             }
         # Example of prev_status_config:
         # prev_status_config = {
-        #     'prev_state_0': {
+        #     'prev_state_0': {                   # input에 해당하는 state
         #         'init_status': None,
         #         'batch_dim_index': 0,
         #     },
-        #     'prev_state_1': {
+        #     'prev_state_1': {                   # 첫번째 블락을 통과한 state
         #         'init_status': None,
         #         'batch_dim_index': 0,
         #     },
@@ -603,6 +655,8 @@ class Transformer(nn.Module):
                 max_length=max_length,
             ) for _ in range(batch_size)
         ]
+            # batch_size만큼 boards를 만들어. // done_cnt도 만들어.
+
         done_cnt = [board.is_done() for board in boards]
 
         length = 0
@@ -613,9 +667,11 @@ class Transformer(nn.Module):
             for i, board in enumerate(boards): # i == sample_index in minibatch
                 if board.is_done() == 0:
                     y_hat_i, prev_status = board.get_batch()
-
+                        # y_hat_i : [beam_size, 1] - 마지막 출력물을 가져옴 구체적으로는 [5,1]                from word_indice : tensor[0,0,0,0,0]
+                        # prev_status : {'prev_status_0' : None, 'prev_status_1' : None, ...}
+                        
                     fab_input += [y_hat_i                 ]
-                    fab_z     += [z[i].unsqueeze(0)       ] * beam_size
+                    fab_z     += [z[i].unsqueeze(0)       ] * beam_size # z : [batch, n, hs] -> i번째 batch 가져오기 때문에 첫번째 차원이 사라짐. 따라서 다시 생성해줌
                     fab_mask  += [mask_dec[i].unsqueeze(0)] * beam_size
 
                     for layer_index in range(n_dec_layers + 1):
@@ -625,17 +681,23 @@ class Transformer(nn.Module):
                         else:
                             fab_prevs[layer_index] = None
 
+            # 뻥튀기
             fab_input = torch.cat(fab_input, dim=0)
             fab_z     = torch.cat(fab_z,     dim=0)
             fab_mask  = torch.cat(fab_mask,  dim=0)
             for i, fab_prev in enumerate(fab_prevs): # i == layer_index
                 if fab_prev is not None:
                     fab_prevs[i] = torch.cat(fab_prev, dim=0)
+            
+            # current_batch_size = batch_size * beam_size
             # |fab_input|    = (current_batch_size, 1,)
             # |fab_z|        = (current_batch_size, n, hidden_size)
             # |fab_mask|     = (current_batch_size, 1, n)
-            # |fab_prevs[i]| = (current_batch_size, length, hidden_size)
+            # |fab_prevs[i]| = (current_batch_size, length, hidden_size) : i번째 디코더 블록에서 나온 결과물. -> 이전에 나온 것과 결합해줄거야. by fab_prevs[layer_index + 1] = torch.cat([fab_preves[layer_index + 1], h_t], dim = 1)
             # len(fab_prevs) = n_dec_layers + 1
+            # -----------------------여기까지 가짜 minibatch만드는.. -------------------------------------
+
+
 
             # Unlike training procedure,
             # take the last time-step's output during the inference.
