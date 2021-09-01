@@ -27,7 +27,7 @@ class SingleBeamSearchBoard():
     ):
         '''
         init에 previous_status를 저장함. -> prev_status
-        
+
 
         '''
         self.beam_size = beam_size
@@ -108,8 +108,8 @@ class SingleBeamSearchBoard():
 
     def get_batch(self):
         '''
-        returning [beam_size,1] : last step output(V_t)
-                [baem_size, L, H] : prev_state_i  = 이거 튜플임.
+        y_hat : 이전 타임 스텝의 출력물을 가져와서, 마지막에 차원을 하나 만들어준것을 리턴 [beam_size, 1] : 단어 * beam_size
+        self.prev_status[0] : [beam_size, L, H] // prev_status는 튜플임.
         '''
         y_hat = self.word_indice[-1].unsqueeze(-1)
             # word_indice : tensor([0,0,0,0,0]) 이전 타임 스탭의 출력물을 가져옴. -> unsqueeze(-1) : [5,1]
@@ -127,14 +127,19 @@ class SingleBeamSearchBoard():
 
     #@profile 
     def collect_result(self, y_hat, prev_status):
-        # |y_hat| = (beam_size, 1, output_size)
-        # prev_status is a dict, which has following keys:
-        # if model != transformer:
-        #     |hidden| = |cell| = (n_layers, beam_size, hidden_size)
-        #     |h_t_tilde| = (beam_size, 1, hidden_size)
-        # else:
-        #     |prev_state_i| = (beam_size, length, hidden_size),
-        #     where i is an index of layer.
+        '''
+        예측된 결과들을 바탕으로 상위 5개의 후보군을 구하는 메서드.
+
+        
+        |y_hat| = (beam_size, 1, output_size)
+        prev_status is a dict, which has following keys:
+        if model != transformer:
+            |hidden| = |cell| = (n_layers, beam_size, hidden_size)
+            |h_t_tilde| = (beam_size, 1, hidden_size)
+        else:
+            |prev_state_i| = (beam_size, length, hidden_size),
+            where i is an index of layer. 12layers(?)
+        '''
         output_size = y_hat.size(-1)
 
         self.current_time_step += 1
@@ -147,7 +152,13 @@ class SingleBeamSearchBoard():
         cumulative_prob = self.cumulative_probs[-1].masked_fill_(self.masks[-1], -float('inf'))
             # cumulative_probs들이 5개씩 탁탁탁 쌓일텐데 그중 마지막걸 가져와서
             # 마지막 마스킹 정보를 갖고와서, True이면 마스크를 하고 with -inf로, 아니면 마스킹을 하지 않는다.
-        cumulative_prob = y_hat + cumulative_prob.view(-1, 1, 1).expand(self.beam_size, 1, output_size) # broadcasting되기 때문에 expand안해도됨.
+        cumulative_prob = y_hat + cumulative_prob.view(-1, 1, 1).expand(self.beam_size, 1, output_size)
+            # expand 결과물 : [[[ -1.12, 1.3, ... , 1,    3,   2.45],
+            #                  [[-inf, -inf,..., -inf, -inf, -inf]],
+            #                              ...
+            #                  [[                                 ]]
+            # -inf 인것은 마스킹된것,.. 보지 않겠다는거야.
+            # 각 beam마다 확률값들이 나옴.
         # |cumulative_prob| = (beam_size, 1, output_size)
 
         # Now, we have new top log-probability and its index.
@@ -162,8 +173,10 @@ class SingleBeamSearchBoard():
         # )
 
         # Following lines are using torch.sort, instead of using torch.topk.
-        top_log_prob, top_indice = cumulative_prob.view(-1).sort(descending=True)
+        top_log_prob, top_indice = cumulative_prob.view(-1).sort(descending=True) # 5개의 빔중에서 가장 최고의 다섯개의 단어를 뽑고 싶은것,
             # torch.sort를 사용하면 : values, indice두개를 내뱉는다.
+            # top_log_prob : 확률값
+            # top_indice : index값인데, 1*output_size, 2*output_size, 3*output_size, 4*output_size 이렇게 인덱스가 나뉘어진다. 예를들어 19203이면, 두번째 빔에, 9203번째 단어가 선택된 것이다.
         top_log_prob, top_indice = top_log_prob[:self.beam_size], top_indice[:self.beam_size]
             # 상위 5개만 갖고온다.
 
@@ -198,7 +211,9 @@ class SingleBeamSearchBoard():
                 dim=self.batch_dims[prev_status_name], # 어떤 차원을 뽑아올지
                 index=self.beam_indice[-1] # 정해진 dim에서 몇번째 데이터를 뽑아올지.
             ).contiguous()
-
+            # beam_indice[-1] : 마지막 빔 index에서(여기에는 top5안에 들어간 빔의 index가 들어있다)
+            # 이전(prev_status)의 상태를 갖고온다
+            # 예를들어 beam_indice[-1] : [1,1,2,3,3]이라면 1,1,2,3,3빔의 prev_status를 갖고오고 그걸 prev_status에 업데이트 한다.
 
 
 

@@ -40,7 +40,9 @@ class Attention(nn.Module):
 
 
 class MultiHead(nn.Module):
-
+    '''
+    returning c : [bs, m, hs]
+    '''
     def __init__(self, hidden_size, n_splits):
         super().__init__()
 
@@ -248,7 +250,9 @@ class DecoderBlock(nn.Module):
             # ))
 
             # Pre-LN:
-            normed_prev = self.masked_attn_norm(prev)
+            normed_prev = self.masked_attn_norm(prev) 
+                # masked_attn_norm : nn.Layer(hidden)
+                # normed_prev -> K, V
             z = self.masked_attn_norm(x)
             z = x + self.masked_attn_dropout(
                 self.masked_attn(z, normed_prev, normed_prev, mask=None) # mask를 None으로 한 이유는, 어차피 input에 미래가 없기 때문이다.
@@ -260,7 +264,7 @@ class DecoderBlock(nn.Module):
         #                                                    V=key_and_value,
         #                                                    mask=mask)))
 
-        # Pre-LN:
+        # Pre-LN: attn with encoder.
         normed_key_and_value = self.attn_norm(key_and_value)
         z = z + self.attn_dropout(self.attn(Q=self.attn_norm(z),
                                             K=normed_key_and_value,
@@ -647,6 +651,7 @@ class Transformer(nn.Module):
         #     }
         # }
 
+        # boards는 every batch마다 만들어.
         boards = [
             SingleBeamSearchBoard(
                 z.device,
@@ -659,14 +664,14 @@ class Transformer(nn.Module):
 
         done_cnt = [board.is_done() for board in boards]
 
-        length = 0
+        length = 0 # 몇 타임 스탭까지 decoding이 되었나.
         while sum(done_cnt) < batch_size and length <= max_length:
             fab_input, fab_z, fab_mask = [], [], []
             fab_prevs = [[] for _ in range(n_dec_layers + 1)]
 
             for i, board in enumerate(boards): # i == sample_index in minibatch
                 if board.is_done() == 0:
-                    y_hat_i, prev_status = board.get_batch()
+                    y_hat_i, prev_status = board.get_batch() # prev_status는 여기서 5배로 불려져서 나와.
                         # y_hat_i : [beam_size, 1] - 마지막 출력물을 가져옴 구체적으로는 [5,1]                from word_indice : tensor[0,0,0,0,0]
                         # prev_status : {'prev_status_0' : None, 'prev_status_1' : None, ...}
                         
@@ -676,6 +681,7 @@ class Transformer(nn.Module):
 
                     for layer_index in range(n_dec_layers + 1):
                         prev_i = prev_status['prev_state_%d' % layer_index]
+                            # 가장 최근 아웃풋.
                         if prev_i is not None:
                             fab_prevs[layer_index] += [prev_i]
                         else:
@@ -688,7 +694,10 @@ class Transformer(nn.Module):
             for i, fab_prev in enumerate(fab_prevs): # i == layer_index
                 if fab_prev is not None:
                     fab_prevs[i] = torch.cat(fab_prev, dim=0)
-            
+                        # fab_prev : [torch(beam, length, hs),
+                        #              torch(beam, length, hs),
+                        #               ...]  -> cat..
+
             # current_batch_size = batch_size * beam_size
             # |fab_input|    = (current_batch_size, 1,)
             # |fab_z|        = (current_batch_size, n, hidden_size)
@@ -702,19 +711,36 @@ class Transformer(nn.Module):
             # Unlike training procedure,
             # take the last time-step's output during the inference.
             h_t = self.emb_dropout(
-                self._position_encoding(self.emb_dec(fab_input), init_pos=length)
+                self._position_encoding(self.emb_dec(fab_input), init_pos=length) # init_pos 까먹지마.
             )
             # |h_t| = (current_batch_size, 1, hidden_size)
             if fab_prevs[0] is None:
                 fab_prevs[0] = h_t
             else:
                 fab_prevs[0] = torch.cat([fab_prevs[0], h_t], dim=1)
+                    # input을 업데이트함.
+
+            '''
+            하고 싶은것,
+            1. fab_prevs = [[],[],[],[],...[]] 선언함.
+            2. prev_i(i: layer index)는 [current_batch_size, 1, hidden_size]를 갖고있음.
+            3. fab_prev_i에다가 torch.cat([fab_prev_i, prev_i], dim = 1)을 함 -> [current_batch_size, 2, hidden_size]
+            결론적으로 hidden의 결과물들을 fab_prevs에 모은다.
+            
+            '''
 
             for layer_index, block in enumerate(self.decoder._modules.values()):
+                '''
+                하나씩 새로운 데이터를 넣어준다. 그리고 그때 발생한 hidden을
+                fab_prevs에 저장한다.
+                '''
                 prev = fab_prevs[layer_index]
                 # |prev| = (current_batch_size, m, hidden_size)
 
                 h_t, _, _, _, _ = block(h_t, fab_z, fab_mask, prev, None)
+                '''
+                    x, key_and_value, mask, prev, future_mask
+                '''
                 # |h_t| = (current_batch_size, 1, hidden_size)
 
                 if fab_prevs[layer_index + 1] is None:
@@ -725,27 +751,30 @@ class Transformer(nn.Module):
                         dim=1,
                     ) # Append new hidden state for each layer.
 
-            y_hat_t = self.generator(h_t)
-            # |y_hat_t| = (batch_size, 1, output_size)
+            y_hat_t = self.generator(h_t) # 맨 마지막 h_t는 자동으로 다음 fab_prevs[0]에 합쳐지네.
+            # |y_hat_t| = (current_batch_size, 1, output_size)
 
             # |fab_prevs[i][begin:end]| = (beam_size, length, hidden_size)
             cnt = 0
-            for board in boards:
-                if board.is_done() == 0:
+            for board in boards: # batchsize만큼 boards가 있음.
+                if board.is_done() == 0: # 보드가 done이 아니라면
                     begin = cnt * beam_size
                     end = begin + beam_size
-
-                    prev_status = {}
+                    # 0-5, 5-10, ...
+                    
+                    prev_status = {} # 임시 저장소. 이번 배치의 begin
                     for layer_index in range(n_dec_layers + 1):
                         prev_status['prev_state_%d' % layer_index] = fab_prevs[layer_index][begin:end]
-
+                        # fab(가짜에서) -> 진짜로(prev_status) 쪼개서 넣어줘야함.
                     board.collect_result(y_hat_t[begin:end], prev_status)
-
+                        # y_hat_t : [current_batch_size, 1, output_size][begin:end] -> [beam_size,1,output_size]
                     cnt += 1
 
             done_cnt = [board.is_done() for board in boards]
             length += 1
 
+
+################################ 여기서부터 다시 ####################################
         batch_sentences, batch_probs = [], []
 
         for i, board in enumerate(boards):
