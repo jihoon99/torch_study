@@ -298,13 +298,14 @@ class Seq2Seq(nn.Module):
         # Also, each direction of layer is half hidden size.
         # Therefore, we concatenate both directions to 1 hidden size layer.
         for i in range(0, hiddens.size(0), 2): # 0~2*layers만큼 for문을 돌림.
-            new_hiddens += [torch.cat([hiddens[i], hiddens[i + 1]], dim=-1)] # 0,1 // 2,3 // 이런식으로 묶어서 넣어줌.
+            new_hiddens += [torch.cat([hiddens[i], hiddens[i + 1]], dim=-1)] # 0,1 // 2,3 // 이런식으로 묶어서 넣어줌. -> hs가 두배로 커짐.
                 # new_hiddens : [bs, hs/2*2] -> [bs, hs]
             new_cells += [torch.cat([cells[i], cells[i + 1]], dim=-1)]
 
         new_hiddens, new_cells = torch.stack(new_hiddens), torch.stack(new_cells)
                 # new_hiddens : [layers, bs, hs]
                 # new_cells : [layers, bs, hs]
+                # torch.cat을 해도 똑같을걸?
         return (new_hiddens, new_cells)
 
 
