@@ -379,6 +379,7 @@ def main(config, model_weight=None, opt_weight=None):
 
     
     # 강화학습 부분
+    # 강화학습 하려면 rl_n_epochs가 실수이면, 실행됨.
     if config.rl_n_epochs > 0:
         optimizer = optim.SGD(model.parameters(), lr=config.rl_lr)
         mrt_trainer = SingleTrainer(MinimumRiskTrainingEngine, config)

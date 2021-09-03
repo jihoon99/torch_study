@@ -144,7 +144,6 @@ class MaximumLikelihoodEstimationEngine(Engine):
             In these regions, CUDA ops run in an op-specific dtype chosen by autocast to improve performance while maintaining accuracy. See the Autocast Op Reference for details.
             When entering an autocast-enabled region, Tensors may be any type. You should not call .half() on your model(s) or inputs when using autocasting.
             autocast should wrap only the forward pass(es) of your network, including the loss computation(s). Backward passes under autocast are not recommended. Backward ops run in the same type that autocast used for corresponding forward ops.
-            
             '''
                 # Take feed-forward
                 # Similar as before, the input of decoder does not have EOS token.
@@ -152,7 +151,8 @@ class MaximumLikelihoodEstimationEngine(Engine):
             y_hat = engine.model(x, mini_batch.tgt[0][:, :-1])  
                 # 모델에 학습 데이터 들어갈땐 {BOS, y_1, y_2} 들어갈거야.
                 # |y_hat| = (b, l, |V|) : 각 미니배치별, length별, 단어별 로그 확률 값이 들어가 있음.
-
+                
+            # contiguous : https://f-future.tistory.com/entry/Pytorch-Contiguous
             loss = engine.crit(
                 y_hat.contiguous().view(-1, y_hat.size(-1)), # flatten
                 y.contiguous().view(-1) # flatten
@@ -160,7 +160,8 @@ class MaximumLikelihoodEstimationEngine(Engine):
                 #NLLoss
             backward_target = loss.div(y.size(0)).div(engine.config.iteration_per_update) 
                 # NLL의 정의는  -1/n *sigma(sgima)인데, Loss정의시 1/n을 안했음. 그래서 직접 나눠줘야함.
-                # 그래서 미니 배치 사이즈로 나눠주고, 이터레이션 퍼 업데이트로 나눠줌.
+                # 그래서 미니 배치 사이즈로 나눠주고, 이터레이션 퍼 업데이트로 나눠줌. 
+                # ?????????????????? 왜 이터레이션 퍼 업데이트로 나눠주지?? ??????????????????
 
         # gpu가 있을때 autocast가 수행
         if engine.config.gpu_id >= 0 and not engine.config.off_autocast:
@@ -171,6 +172,8 @@ class MaximumLikelihoodEstimationEngine(Engine):
         word_count = int(mini_batch.tgt[1].sum())
             # 단어의 갯수를 알아야 로스를 정확하게 구할 수 있음.
             # [1] : 에는 각 batch별 문장의 length가 들어가 있을 것이기 때문에
+        
+        # gradient를 업데이트 하기전에 norm, grad norm을 하네....?????????????????
         p_norm = float(get_parameter_norm(engine.model.parameters())) # parameter norm
         g_norm = float(get_grad_norm(engine.model.parameters())) # gradient norm : 안정적일수록 작아짐.
         '''
@@ -227,10 +230,7 @@ class MaximumLikelihoodEstimationEngine(Engine):
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
                 optimizer.step()
             '''
-            '''
-                ??????????????????????????????????????????????????????
-                왜 scaler가 일요하지??
-            '''
+
             # Take a step of gradient descent.
             # GPU가 있을 경우에, scale을 함.
             if engine.config.gpu_id >= 0 and not engine.config.off_autocast:
@@ -260,6 +260,10 @@ class MaximumLikelihoodEstimationEngine(Engine):
 
     @staticmethod
     def validate(engine, mini_batch):
+        '''
+        input : engine, mini_batch
+        return : {loss, ppl}
+        '''
         engine.model.eval()
 
         with torch.no_grad():
@@ -289,8 +293,6 @@ class MaximumLikelihoodEstimationEngine(Engine):
         }
 
 
-
-
     @staticmethod
     def attach(
         train_engine, validation_engine,
@@ -298,9 +300,24 @@ class MaximumLikelihoodEstimationEngine(Engine):
         validation_metric_names = ['loss', 'ppl'],
         verbose=VERBOSE_BATCH_WISE, # 0,1,2 중 하나.
     ):
+        '''
+        attach method는 repeated되는 항목들을 랩핑하는 메서드이다.
+        train_engine, validation_engine,
+        training_metric_names
+        validation_metric_names
+        verbose를 랩핑한다.
+
+        return은 없다.    
+        '''
         # Attaching would be repaeted for serveral metrics.
         # Thus, we can reduce the repeated codes by using this function.
         def attach_running_average(engine, metric_name):
+            '''
+            RunningAverage를 여러번 반복하니까 그걸위한 코드.
+            ??????????????? lambda x: 여기쪽이 먼가 이해가 안되는데. // x가 여기서 무엇인가....
+                # 이건 추측하는건데,, train, valid engine의 return이 loss tuple로 나옴. 거기랑 와꾸가 맞는것 같네?
+                # 예를들어 valid는 'loss','ppl'을 리턴하는데, 그것에 해당하는 RunningAverage를 attach하는거지...
+            '''
             RunningAverage(output_transform=lambda x: x[metric_name]).attach(
                 engine,
                 metric_name,
@@ -443,6 +460,7 @@ class SingleTrainer():
 
         # Do necessary attach procedure to train & validation engine.
         # Progress bar and metric would be attached.
+        # attach는 만든 메서드
         self.target_engine_class.attach(
             train_engine,
             validation_engine,

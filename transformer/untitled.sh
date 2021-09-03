@@ -288,3 +288,23 @@ seq2seq.py -> beam_search 와 search.py를 살펴보겠다.
 -----------------------------------------------
 
 
+
+
+
+13-1 train.py, trainer.py, rl_trainer.py
+------------------------------------------------
+train.py
+ - config.rl_n_epochs 가 양수이면 rl이 실행됨.
+	* optimizer로 SGD가 할당이되고,
+	* SingleTrainer : trainer.py
+		1) 나중에 train method를 호출하게 되면, 그 트레인명(self.target_engine_class)을 가지고 init함수를 호출함.
+		2) MaximumLikelihoodEstimationEngine은 ignite.Engine을 상속받음.
+	* mrt_trainer로 ignite engine이 할당이 된다 <- 이때 engine은 rl_trainer.py에서 온다.
+
+
+
+
+
+
+
+
