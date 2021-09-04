@@ -27,6 +27,10 @@ VERBOSE_BATCH_WISE = 2
 # 그 두개를 물고 있는 엔진을 하나 또 설정해
 class MaximumLikelihoodEstimationEngine(Engine):
 
+    '''
+    이 클래스는, forward와 backward를 모두 포함한 클래스이다.
+    '''
+
     def __init__(self, func, model, crit, optimizer, lr_scheduler, config):
         self.model = model
         self.crit = crit # criterion (loss)
