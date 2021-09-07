@@ -1,6 +1,7 @@
 from nltk.translate.gleu_score import sentence_gleu
 from nltk.translate.bleu_score import sentence_bleu
 from nltk.translate.bleu_score import SmoothingFunction
+# SmoothingFunction for 
 
 import numpy as np
 
@@ -27,15 +28,32 @@ class MinimumRiskTrainingEngine(MaximumLikelihoodEstimationEngine):
 
     @staticmethod
     def _get_reward(y_hat, y, n_gram=6, method='gleu'):
+        '''
+        y_hat : [bs, len1]
+        y = [bs, len2]
+        sample별, 각 타임스탭의 원핫벡터.
+
+        get_reward함수에 들어가면 각각 score값이 리턴됨
+
+        scores : [bs,]
+        '''
         # This method gets the reward based on the sampling result and reference sentence.
         # For now, we uses GLEU in NLTK, but you can used your own well-defined reward function.
         # In addition, GLEU is variation of BLEU, and it is more fit to reinforcement learning.
         sf = SmoothingFunction()
+
+        # 신박하게 코드 짜셧네.
+        # 이부분은 한번 해봐야 겟다.
         score_func = {
             'gleu':  lambda ref, hyp: sentence_gleu([ref], hyp, max_len=n_gram),
+            # reference(y), hypothesis(y_hat)
+            # gleu의 max_len은 몇 gram인지 파악하는(?)것이고,
+            # bleu에서는 weights가 그 역할을 대신한다.
             'bleu1': lambda ref, hyp: sentence_bleu([ref], hyp,
                                                     weights=[1./n_gram] * n_gram,
                                                     smoothing_function=sf.method1),
+                                                    # weights를 보면 uni-,bi-, ... , six-gram의 가중치가 동일하게 들어감.
+                                                    # sf.method1 : smoothing function factor 1,, method2 : factor2,,,
             'bleu2': lambda ref, hyp: sentence_bleu([ref], hyp,
                                                     weights=[1./n_gram] * n_gram,
                                                     smoothing_function=sf.method2),
@@ -48,19 +66,36 @@ class MinimumRiskTrainingEngine(MaximumLikelihoodEstimationEngine):
         # (especialy we do have different tokenization,) I recommend to set n_gram to 6.
 
         # |y| = (batch_size, length1)
+        '''
+        [[2,2323,23,1,31,4,...],
+         [2,131,4,15,1,41,...],
+         ...] 이런식으로 생겼겠네
+        '''
         # |y_hat| = (batch_size, length2)
 
+
+        #-----------------------------------------------------------------------
+        # 과거에 점수 계산하는 방법은,
+        # preprocess : {mecab - bpe  -> detokenize한뒤 -> BLEU를 했어.
+        #               moses(NLTK)
+        # }
+        # 이렇게 하면 속도가 너무 느려서... 좀 그렇고
+        # fully tokenize된 상태에서 해보자 대신 n_gram의 수를 늘려서.
+
+
+
+        # nltk-(socre_func) 부분은 cpu로 하는 부분이라 multiprocess를 해보려 했는데, 시간상의 큰 차이가 없었다.
         with torch.no_grad():
             scores = []
 
-            for b in range(y.size(0)):
+            for b in range(y.size(0)): # 미니 배치 크기만큼.
                 ref, hyp = [], []
-                for t in range(y.size(-1)):
+                for t in range(y.size(-1)): # 각 배치별로, 정답을 뽑아내는데, <PAD>부분이 안뽑히게, EOS오면 끝나는 sequence를 썼음.
                     ref += [str(int(y[b, t]))]
                     if y[b, t] == data_loader.EOS:
                         break
 
-                for t in range(y_hat.size(-1)):
+                for t in range(y_hat.size(-1)): # 위에랑 똑같은데, 샘플링된것에서 한다.
                     hyp += [str(int(y_hat[b, t]))]
                     if y_hat[b, t] == data_loader.EOS:
                         break
@@ -68,7 +103,7 @@ class MinimumRiskTrainingEngine(MaximumLikelihoodEstimationEngine):
                 # ref = y[b].masked_select(y[b] != data_loader.PAD).tolist()
                 # hyp = y_hat[b].masked_select(y_hat[b] != data_loader.PAD).tolist()
 
-                scores += [score_func(ref, hyp) * 100.]
+                scores += [score_func(ref, hyp) * 100.] # 스코어는 0~1사이값이라, 보기 편하게 100을 곱해줌.
             scores = torch.FloatTensor(scores).to(y.device)
             # |scores| = (batch_size)
 
@@ -77,20 +112,28 @@ class MinimumRiskTrainingEngine(MaximumLikelihoodEstimationEngine):
 
     @staticmethod
     def _get_loss(y_hat, indice, reward=1):
-        # |indice| = (batch_size, length)
-        # |y_hat| = (batch_size, length, output_size)
+        '''
+        # |indice| = (batch_size, length)              :  sampling한 indice
+        # |y_hat| = (batch_size, length, output_size)  :  sampling한 logProbabilityDistribution
         # |reward| = (batch_size,)
+        
+        필기한 식의 결과물을 구하는 메서드이다.
+        '''
         batch_size = indice.size(0)
         output_size = y_hat.size(-1)
 
         '''
+        이게 좀더 직관적임. logP(y_hat|x_i ; theta)
+
         # Memory inefficient but more readable version
-        mask = indice == data_loader.PAD
+        mask = indice == data_loader.PAD # indice가 있는 부분중 PAD가 있는 부분을 마스킹을함. 왜냐하면 패드가 있는 부분에서 저 확률을 구하면 안되니까.
         # |mask| = (batch_size, length)
-        indice = F.one_hot(indice, num_classes=output_size).float()
+        indice = F.one_hot(indice, num_classes=output_size).float() # indice를 원핫벡터로 바꿔줌.
         # |indice| = (batch_size, length, output_size)
-        log_prob = (y_hat * indice).sum(dim=-1)
+        log_prob = (y_hat * indice).sum(dim=-1) # y_hat(probablity) * one_hot -> 정답을 맞춘 확률  // sum을 하면서 dim = -1을 없애줌.
         # |log_prob| = (batch_size, length)
+        # 여기까지 logP(y_hat|x_i : theta)을 구한거야.
+
         log_prob.masked_fill_(mask, 0)
         log_prob = log_prob.sum(dim=-1)
         # |log_prob| = (batch_size, )
@@ -103,6 +146,13 @@ class MinimumRiskTrainingEngine(MaximumLikelihoodEstimationEngine):
             ignore_index=data_loader.PAD,
             reduction='none'
         ).view(batch_size, -1).sum(dim=-1)
+        # https://airsbigdata.tistory.com/202
+            # nll_loss(
+            #       y_logProb    -> reshape  [-1,output_size],
+            #       정답의 one_hot -> reshape  [-1,output_size],
+            # )
+        # log_prob의 값은 양수기에, -를 앞에다가 붙엿어.
+
 
         loss = (log_prob * -reward).sum()
         # Following two equations are eventually same.
@@ -114,9 +164,21 @@ class MinimumRiskTrainingEngine(MaximumLikelihoodEstimationEngine):
 
     @staticmethod
     def train(engine, mini_batch):
+        '''
+        MaximumLikelihoodEstimationEngine을 상속받았고, MLEengine에서도 train이 있는데, 그걸 덮어쓰기하는것임.
+        입력으로     : engine, mini_batch
+        return으로  :   
+            'actor': float(actor_reward.mean()),
+            'baseline': float(baseline.mean()),
+            'reward': float(reward.mean()),
+            '|param|': p_norm if not np.isnan(p_norm) and not np.isinf(p_norm) else 0.,
+            '|g_param|': g_norm if not np.isnan(g_norm) and not np.isinf(g_norm) else 0.,
+        }
+        '''
         # You have to reset the gradients of all model parameters
         # before to take another step in gradient descent.
         engine.model.train()
+        # gradient accumulation
         if engine.state.iteration % engine.config.iteration_per_update == 1 or \
             engine.config.iteration_per_update == 1:
             if engine.state.iteration > 1:
@@ -124,24 +186,33 @@ class MinimumRiskTrainingEngine(MaximumLikelihoodEstimationEngine):
 
         device = next(engine.model.parameters()).device
         mini_batch.src = (mini_batch.src[0].to(device), mini_batch.src[1])
+            # ?????????????????? -- x[0]는 gpu에 보내면서 y[0]은 왜 안보내지? 음. 길이는 안보내도 되나?
         mini_batch.tgt = (mini_batch.tgt[0].to(device), mini_batch.tgt[1])
 
         # Raw target variable has both BOS and EOS token.
         # The output of sequence-to-sequence does not have BOS token.
         # Thus, remove BOS token for reference.
-        x, y = mini_batch.src, mini_batch.tgt[0][:, 1:]
+        x, y = mini_batch.src, mini_batch.tgt[0][:, 1:] # 문장의 맨앞에 BOS가 있는데 그걸 제외하고 가져온다.
         # |x| = (batch_size, length)
         # |y| = (batch_size, length)
 
         # Take sampling process because set False for is_greedy.
+            # 기존의 경우에는 여기서 feedforward를 했었어.
+            # 근데 여기서는 추론을 함.
+            # y_hat  : [bs, m, output_sz]
+            # indice : [bs, m]
+        # where ( y_hat ~ P( * | x[i];theta) 부분임.
+        # 여기서 y_hat은 확률값임. softmax취하고나서 값이야.
         y_hat, indice = engine.model.search(
             x,
-            is_greedy=False,
+            is_greedy=False, # 강화학습에서는 random sampling을 통해서 다른 가능성을 열어둬..
             max_length=engine.config.max_length
         )
 
+        # policy gradient특징이 gradient할 필요가 없음.
         with torch.no_grad():
             # Based on the result of sampling, get reward.
+            # get_reward구하는데, 더이상 미분이 필요 없음.
             actor_reward = MinimumRiskTrainingEngine._get_reward(
                 indice,
                 y,
@@ -156,12 +227,13 @@ class MinimumRiskTrainingEngine(MaximumLikelihoodEstimationEngine):
             # I figured out that n_samples = 1 would be enough.
             baseline = []
 
-            for _ in range(engine.config.rl_n_samples):
+            for _ in range(engine.config.rl_n_samples): # 지금은 rl_n_sample의 default는 1임. // 몬테 카를로가 1이여도 근사가 잘된다(????????????????? 무슨말임)
                 _, sampled_indice = engine.model.search(
                     x,
                     is_greedy=False,
                     max_length=engine.config.max_length,
                 )
+                    # 앞부분이 필요 없는 이유는, softmax의 확률값이 필요가 없음. 우리는 결과물인 sample만 필요함. 따라서 sampled_indice만 있으면 된다
                 baseline += [
                     MinimumRiskTrainingEngine._get_reward(
                         sampled_indice,
@@ -169,10 +241,13 @@ class MinimumRiskTrainingEngine(MaximumLikelihoodEstimationEngine):
                         n_gram=engine.config.rl_n_gram,
                         method=engine.config.rl_reward,
                     )
-                ]
+                ] # baseline에 k개 만큼 score값들이 쌓이겟지.
 
             baseline = torch.stack(baseline).mean(dim=0)
-            # |baseline| = (n_samples, batch_size) --> (batch_size)
+                # baseline : [bs,]
+                # stack : [bs,]*k => [k,bs]
+                # mean : [bs]
+            # |baseline| = (n_samples, batch_size) --> (batch_size) : batch별 reward의 평균.
 
             # Now, we have relatively expected cumulative reward.
             # Which score can be drawn from actor_reward subtracted by baseline.

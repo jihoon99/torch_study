@@ -509,8 +509,13 @@ class Transformer(nn.Module):
 
         '''
         is_greedy : 가장 높은 확률로 when it is True
-
         
+        return ---------------------
+        y_hats    :  [bs,m,output_sz]
+        indice    :  [bs, m]
+
+        indice는 [[2,1,3,4, ... ],
+                 [2,3,461, ... ]] 이런형태야
         '''
         # |x[0]| = (batch_size, n)
         batch_size = x[0].size(0)

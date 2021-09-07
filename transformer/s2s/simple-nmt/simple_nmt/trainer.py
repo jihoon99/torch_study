@@ -28,7 +28,9 @@ VERBOSE_BATCH_WISE = 2
 class MaximumLikelihoodEstimationEngine(Engine):
 
     '''
-    이 클래스는, forward와 backward를 모두 포함한 클래스이다.
+    이 클래스는, forward와 backward를 모두 포함한 클래스
+    
+    train, valid, attch(train, valid), resume_training, check_best ,save_model,
     '''
 
     def __init__(self, func, model, crit, optimizer, lr_scheduler, config):

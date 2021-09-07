@@ -305,6 +305,21 @@ train.py
 
 
 
+13-2 rl_trainer.py
+-----------------------------------------------
+reward함수를 잘 짜야함. 빈틈이 있으면 안됨. // 그래서 우리는 BLEU라는 것을 사용하는데, 구글에서는 이마져도 부족하다고 해서 GLEU를 만들어서 썻어.
+smoothing function을 써야함. 안그러면 빈틈을 찾아내서 이상하게 optimize함.
 
 
+
+
+실행
+--------------------------------------------------
+watch -n .5 nvidia-smi
+
+top
+
+echo '기존에 30epoch MLE프리트레이닝 모델을 활용하여 RL 파인튜닝을 진행하도록 합니다'
+
+python continue_train.py --load_fn ./models/models.20200906/enko.bs-160.max_length-64.dropout-2.ws-512.hs-768.n_layers-4.iter_per_update-2.30.1.23-3.41.1.48-4.41.pth --rl_n_epochs 20 --max_grad_norm 5 --gpu_id 0 --init_epoch 31 --model_fn ./models/rl.pth
 
