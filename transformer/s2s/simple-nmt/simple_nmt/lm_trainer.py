@@ -51,6 +51,7 @@ class LanguageModelTrainingEngine(MaximumLikelihoodEstimationEngine):
         # if 'is_src_target' is true, the trainer would train language model for source language.
         # For dsl case, both x and y has BOS and EOS tokens.
         # Thus, we need to remove BOS and EOS before the training.
+            # is_src_target이 true면, [bos:], [:eos]이렇게 세트로 들어간다.
         x = mini_batch.src[0][:, :-1] if engine.is_src_target else mini_batch.tgt[0][:, :-1]
         y = mini_batch.src[0][:, 1:] if engine.is_src_target else mini_batch.tgt[0][:, 1:]
         # |x| = |y| = (batch_size, length)
@@ -64,6 +65,7 @@ class LanguageModelTrainingEngine(MaximumLikelihoodEstimationEngine):
                 y.contiguous().view(-1),
             ).sum()
             backward_target = loss.div(y.size(0))
+            #???????????????????? 왜 배치 사이즈로 나눴을까 ????????????
 
         if engine.config.gpu_id >= 0 and not engine.config.off_autocast:
             engine.scaler.scale(backward_target).backward()
@@ -129,6 +131,9 @@ class LanguageModelTrainingEngine(MaximumLikelihoodEstimationEngine):
 
     @staticmethod
     def check_best(engine):
+        '''
+        예전이랑 다른것은, deepcopy를 해서 베스트 모델을 카피해놔.
+        '''
         loss = float(engine.state.metrics['loss'])
         if loss <= engine.best_loss:
             engine.best_loss = loss
@@ -140,6 +145,10 @@ class LanguageModelTrainingEngine(MaximumLikelihoodEstimationEngine):
 
 
 class LanguageModelTrainer():
+
+    '''
+    ignit engine을 Wrapping하는 클래스
+    '''
 
     def __init__(self, config):
         self.config = config
@@ -181,7 +190,7 @@ class LanguageModelTrainer():
             config=self.config,
         )
 
-        LanguageModelTrainingEngine.attach(trainer, evaluator, verbose=self.config.verbose)
+        LanguageModelTrainingEngine.attach(trainer, evaluator, verbose=self.config.verbose) # attach from MLE.engine : class
 
         def run_validation(engine, evaluator, valid_loader):
             evaluator.run(valid_loader, max_epochs=1)

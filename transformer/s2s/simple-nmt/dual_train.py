@@ -171,6 +171,9 @@ def load_lm(fn, language_models):
 
 
 def get_models(src_vocab_size, tgt_vocab_size, config):
+    '''
+        return : language_models, models
+    '''
     language_models = [
         LanguageModel(
             tgt_vocab_size,
@@ -233,6 +236,13 @@ def get_models(src_vocab_size, tgt_vocab_size, config):
 
 
 def get_crits(src_vocab_size, tgt_vocab_size, pad_index):
+    '''
+    input : src_vocab_size, tgt_vocab_size, pad_index
+
+    P(Y|X)와 P(X)모두 같은 NLL을 쓸거기에, dual train과 LM만들때 같은 get_crits를 공유한다.
+    
+    return : x->y, y->x의 NLL Loss를 list형태로 return. 즉 두개의 값을 리턴함.
+    '''
     loss_weights = [
         torch.ones(tgt_vocab_size),
         torch.ones(src_vocab_size),
@@ -276,7 +286,8 @@ def main(config, model_weight=None, opt_weight=None):
         batch_size=config.batch_size,
         device=-1,
         max_length=config.max_length,
-        dsl=True,
+        dsl=True, # 이 부분이 중요. 
+        # ?????????????????/// x,y모두 eos, bos를 넣어준다는데,, 아니던데,, 어떻게 작동하는거지? ???????????????????????
     )
 
     src_vocab_size = len(loader.src.vocab)

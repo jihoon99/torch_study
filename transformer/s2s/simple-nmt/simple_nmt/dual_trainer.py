@@ -50,6 +50,12 @@ class DualSupervisedTrainingEngine(Engine):
 
     @staticmethod
     def _reorder(x, y, l):
+        '''
+        input : x,y,l
+        l - y의 length
+
+        return x_, (y_, l_), restore_indice
+        '''
         # This method is one of important methods in this class.
         # Since encoder takes packed_sequence instance,
         # the samples in mini-batch must be sorted by lengths.

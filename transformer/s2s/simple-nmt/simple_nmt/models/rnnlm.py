@@ -44,9 +44,9 @@ class LanguageModel(nn.Module):
         x = self.emb(x) 
         # |x| = (batch_size, length, word_vec_size)
         x, _ = self.rnn(x) 
-        # |x| = (batch_size, length, hidden_size)
+        # |x| = (batch_size, length, hidden_size) : 아웃풋만필요, hidden, cell은 _ 처리
         x = self.out(x) 
-        # |x| = (batch_size, length, vocab_size)
+        # |x| = (batch_size, length, vocab_size) : 미니배치별, 샘플별, 로그확률값.
         y_hat = self.log_softmax(x)
 
         return y_hat

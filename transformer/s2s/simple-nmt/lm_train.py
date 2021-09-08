@@ -118,6 +118,10 @@ def define_argparser(is_continue=False):
 
 
 def get_models(src_vocab_size, tgt_vocab_size, config):
+
+    '''
+    reutrn : [LanguageModel, LanguageModel : class] - LanguageModel은 LSTM이라고 생각하면 된다.
+    '''
     language_models = [
         LanguageModel(
             tgt_vocab_size,
@@ -151,7 +155,7 @@ def main(config):
         batch_size=config.batch_size,
         device=-1,
         max_length=config.max_length,
-        dsl=True,
+        dsl=True, # 이게 있어야 x,y모두 bos,eos가 들어간데, //근데 어떻게 들어가는지는 잘 모르겟음.
     )
 
     src_vocab_size = len(loader.src.vocab)
@@ -163,6 +167,8 @@ def main(config):
         config
     )
 
+    # get_crits는 dual_train.py에 있는 crits이다.
+    # P(Y|X)나 P(Y)나 같은 NLL을 쓸거기 때문이다.
     crits = get_crits(
         src_vocab_size,
         tgt_vocab_size,
@@ -178,18 +184,20 @@ def main(config):
         print(models)
 
     for model, crit in zip(models, crits):
+        # LM같은 경우 귀찮아서 그냥 Adam썼어ㅓ.
         optimizer = optim.Adam(model.parameters())
-        lm_trainer = LMTrainer(config)
+        lm_trainer = LMTrainer(config) # engine일거야
 
         model = lm_trainer.train(
             model, crit, optimizer,
             train_loader=loader.train_iter,
             valid_loader=loader.valid_iter,
-            src_vocab=loader.src.vocab if model.vocab_size == src_vocab_size else None,
-            tgt_vocab=loader.tgt.vocab if model.vocab_size == tgt_vocab_size else None,
+            src_vocab=loader.src.vocab if model.vocab_size == src_vocab_size else None, # 만약 모델의 vocab_size가 src_vocab과 같으면 src_vobab은 src_vocab_size가 된다., 아니면 None임. None일때는 어찌 되는건가?..
+            tgt_vocab=loader.tgt.vocab if model.vocab_size == tgt_vocab_size else None, # 
             n_epochs=config.n_epochs,
         )
-
+        
+    # 가장 좋은 모델이 저장된다고?
     torch.save(
         {
             'model': [
