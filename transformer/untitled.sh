@@ -341,4 +341,7 @@ lm같은경우 금방 트레인 되기 때문에 resume_train 과 같은 기능�
 
 14-3. dual_trainer.py
 ---------------------------------------------------
-입출력 텐서를 맞춰주는 부분.
+입출력 텐서를 맞춰주는 부분.(_reorder, _restore_order)
+loss 부분 : (_get_loss)
+
+DualSupervisedTrainingEngine을 새로 만든 이유는 : 모델을 두개를 동시에 업뎃하다보니, skim이 조금 다름... 따라서 새로 만들었다.

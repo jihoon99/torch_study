@@ -52,8 +52,10 @@ class DualSupervisedTrainingEngine(Engine):
     def _reorder(x, y, l):
         '''
         input : x,y,l
-        l - y의 length
 
+        l - y의 length
+        y 기준으로 reorder한다.
+        
         return x_, (y_, l_), restore_indice
         '''
         # This method is one of important methods in this class.
@@ -63,10 +65,17 @@ class DualSupervisedTrainingEngine(Engine):
         # (Because originally src and tgt are sorted by the length of samples in src.)
 
         # sort by length.
-        indice = l.sort(descending=True)[1]
+        indice = l.sort(descending=True)[1] # 큰 순서로 indice들을 품고 있는 list, 그림 그린것처럼 만들기 위함.
 
         # re-order based on the indice.
         x_ = x.index_select(dim=0, index=indice).contiguous()
+        '''
+        torch.index_select(input, dim, index, *, out=None) → Tensor
+            Returns a new tensor which indexes the input tensor along dimension dim using the entries in index which is a LongTensor.
+            The returned tensor has the same number of dimensions as the original tensor (input). The dimth dimension has the same size as the length of index; other dimensions have the same size as in the original tensor.
+
+            x의 어떤 dim을 기준으로 indice를 셀렉트 할건지..
+        '''
         y_ = y.index_select(dim=0, index=indice).contiguous()
         l_ = l.index_select(dim=0, index=indice).contiguous()
 
@@ -81,13 +90,17 @@ class DualSupervisedTrainingEngine(Engine):
 
     @staticmethod
     def _get_loss(x, y, x_hat, y_hat, crits, x_lm=None, y_lm=None, lagrange=1e-3):
-        # |x| = (batch_size, n)
+        '''
+        # |x| = (batch_size, n) : 실제 정답이 들어있는 원핫 텐서
         # |y| = (batch_size, m)
-        # |x_hat| = (batch_size, n, output_size0)
-        # |y_hat| = (batch_size, m, output_size1)
-        # |x_lm| = |x_hat|
+        # |x_hat| = (batch_size, n, output_size0) : s2s로 부터 나온, loglikelihood : logP(x|y)
+        # |y_hat| = (batch_size, m, output_size1) : s2s로 부터 나온, loglikelihood : logP(y|x) - 확률분포가 들어있음.
+        # |x_lm| = |x_hat| = [bs, n, output_size0] : x의 LM인데, : sample별, 각 타임스탭별, 로그확률값임.
         # |y_lm| = |y_hat|
-
+        
+        crits : [some, some] 두개의 element를 갖는 리스트인가바.
+            X2Y, Y2X = 0,1
+        '''
         log_p_y_given_x = -crits[X2Y](
             y_hat.contiguous().view(-1, y_hat.size(-1)),
             y.contiguous().view(-1),
@@ -96,10 +109,10 @@ class DualSupervisedTrainingEngine(Engine):
             x_hat.contiguous().view(-1, x_hat.size(-1)),
             x.contiguous().view(-1),
         )
-        # |log_p_y_given_x| = (batch_size * m)
+        # |log_p_y_given_x| = (batch_size * m) : reduction을 None을 해주었기 때문에, 큰 리스트가 나온다.
         # |log_p_x_given_y| = (batch_size * n)
 
-        log_p_y_given_x = log_p_y_given_x.view(y.size(0), -1).sum(dim=-1)
+        log_p_y_given_x = log_p_y_given_x.view(y.size(0), -1).sum(dim=-1) # view까지 했을때, [bs, m] -> sum 하면 [bs,] // 여기까지 햇을때 우리가 진짜 구하고 싶엇던 샘플별 loglikelihood
         log_p_x_given_y = log_p_x_given_y.view(x.size(0), -1).sum(dim=-1)
         # |log_p_y_given_x| = |log_p_x_given_y| = (batch_size, )
 
@@ -107,7 +120,10 @@ class DualSupervisedTrainingEngine(Engine):
         loss_x2y = -log_p_y_given_x
         loss_y2x = -log_p_x_given_y
 
+        # 만약에 x_lm이 None이거나 y_lm이 None(pre_LM이 없는 경우) dual_loss = None
         if x_lm is not None and y_lm is not None:
+            # lm이 있다면,
+            # loglikelihood Prob
             log_p_x = -crits[Y2X](
                 x_lm.contiguous().view(-1, x_lm.size(-1)),
                 x.contiguous().view(-1),
@@ -121,13 +137,18 @@ class DualSupervisedTrainingEngine(Engine):
 
             log_p_x = log_p_x.view(x.size(0), -1).sum(dim=-1)
             log_p_y = log_p_y.view(y.size(0), -1).sum(dim=-1)
-            # |log_p_x| = (batch_size, )
+            # |log_p_x| = (batch_size, ) : 각 샘플별 logP(x)를 구해.
             # |log_p_y| = (batch_size, )
 
             # Just for logging: both losses are detached.
+                # loy_p_y_given_x와 log_p_x_given_y는 gradient가 있고, log_p_x, log_p_y는 상수(?)일거야.
+                # dual loss는 학습이 잘 되고 있나 보기 위해 구하는 것.
             dual_loss = lagrange * ((log_p_x + log_p_y_given_x.detach()) - (log_p_y + log_p_x_given_y.detach()))**2
 
             # Note that 'detach()' is used to prevent unnecessary back-propagation.
+                # 여기가 이제 본격적으로 학습하는것.
+                # gradient를 하고자 하는 것은, theta_{x->y}임. 따라서 logP(x|y)를 detach함.
+                # log_p_y_given_x가 작아지는 쪽으로 백프로포 할거야. 왜냐하면 log_P_x와 log_P_y는 fix, maybe scalar?
             loss_x2y += lagrange * ((log_p_x + log_p_y_given_x) - (log_p_y + log_p_x_given_y.detach()))**2
             loss_y2x += lagrange * ((log_p_x + log_p_y_given_x.detach()) - (log_p_y + log_p_x_given_y))**2
         else:
@@ -136,15 +157,20 @@ class DualSupervisedTrainingEngine(Engine):
         return (
             loss_x2y.sum(),
             loss_y2x.sum(),
-            float(dual_loss.sum()) if dual_loss is not None else .0,
+            float(dual_loss.sum()) if dual_loss is not None else .0, # dual loss를 구하는 이유는, dual loss가 잘 구해지고 있나 보기 위해 print를 할거야.
         )
 
     @staticmethod
     def train(engine, mini_batch):
+        '''
+        ignite train을 쓰려면 typical 형태를 갖고 있어야함. (engine, mini_batch)
+        '''
+        # 각각 2개씩 들어가 있을거라서, for 두번돌거야.
+        # 초기 세팅같은건가? // train은 매 iteration 돌때마다 도는건가? 그래야지만 iteration update부분이 말이 된다.
         for language_model, model, optimizer in zip(engine.language_models,
                                                     engine.models,
                                                     engine.optimizers):
-            language_model.eval()
+            language_model.eval() # LM은 freeze
             model.train()
             if engine.state.iteration % engine.config.iteration_per_update == 1 or \
                 engine.config.iteration_per_update == 1:
@@ -156,20 +182,28 @@ class DualSupervisedTrainingEngine(Engine):
         mini_batch.tgt = (mini_batch.tgt[0].to(device), mini_batch.tgt[1].to(device))
         
         with autocast(not engine.config.off_autocast):
-            # X2Y
-            x, y = (mini_batch.src[0][:, 1:-1], mini_batch.src[1] - 2), mini_batch.tgt[0][:, :-1]
+            # X2Y --------------------------------------------------------------------------------------------
+            # X2Y에서는, 데이터가 이쁘게 들어오기 때문에, 그냥 그대로 진행하면 된다.
+            # x,y모두 eos,bos모두 들고 있다. 왜냐하면, dual이라서 번갈아 가면서 진행할거기에..
+            x, y = (mini_batch.src[0][:, 1:-1], mini_batch.src[1] - 2), mini_batch.tgt[0][:, :-1] # 왜 eos를 빼지? teacher forcing을 하기위해서 이다.
             x_hat_lm, y_hat_lm = None, None
             # |x| = (batch_size, n)
             # |y| = (batch_size, m)
-            y_hat = engine.models[X2Y](x, y)
+            y_hat = engine.models[X2Y](x, y) # s2s의 forward보면 x,y가 들어가긴하네.
             # |y_hat| = (batch_size, m, y_vocab_size)
             
+            # 웜업중이면 LM의 loglikelihood를 구할 필요는 없는데, warm-up이 끝나면, 실제로 dual loss를 구해야 함.
+            # ?????????????????????? warm up 은 왜필요한거 ???????????????
             if engine.state.epoch > engine.config.dsl_n_warmup_epochs:
+                # 웜업이 끝났으면,
                 with torch.no_grad():
                     y_hat_lm = engine.language_models[X2Y](y)
+                    # y를 넣어서 logP(y)를 구해서 한번 validate해봐
                     # |y_hat_lm| = |y_hat|
 
-            #Y2X
+
+
+            # Y2X ---------------------------------------------------------------------------------------------
             # Since encoder in seq2seq takes packed_sequence instance,
             # we need to re-sort if we use reversed src and tgt.
             x, y, restore_indice = DualSupervisedTrainingEngine._reorder(
@@ -305,6 +339,11 @@ class DualSupervisedTrainingEngine(Engine):
         validation_metric_names = ['x2y', 'y2x'],
         verbose=VERBOSE_BATCH_WISE
     ):
+        '''
+        reg : dual loss
+        
+        거이 비슷한데, 두개의 Loss를 계산해야되서, 그부분이 바뀜.
+        '''
         # Attaching would be repaeted for serveral metrics.
         # Thus, we can reduce the repeated codes by using this function.
         def attach_running_average(engine, metric_name):
@@ -437,8 +476,12 @@ class DualSupervisedTrainer():
         train_loader, valid_loader,
         vocabs,
         n_epochs,
-        lr_schedulers=None
+        lr_schedulers=None 
     ):
+        '''
+        models, language_models,crits, optimizers, vocabs, n_epochs, lr_schedulers는 모두 리스트로 들어올거야.
+        lr_schedulers : 실험상 해봐도 별로 차이가 없어서 None으로 함.
+        '''
         # Declare train and validation engine with necessary objects.
         train_engine = DualSupervisedTrainingEngine(
             DualSupervisedTrainingEngine.train,

@@ -282,7 +282,7 @@ def main(config, model_weight=None, opt_weight=None):
     loader = DataLoader(
         config.train,
         config.valid,
-        (config.lang[:2], config.lang[-2:]),
+        (config.lang[:2], config.lang[-2:]), # (en,ko)
         batch_size=config.batch_size,
         device=-1,
         max_length=config.max_length,
