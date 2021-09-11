@@ -163,6 +163,11 @@ def define_argparser(is_continue=False):
 
 
 def load_lm(fn, language_models):
+    '''
+    no 'return'
+    
+    pre-trained된 LM에서 각각의 language모델의 state을 load함.
+    '''
     saved_data = torch.load(fn, map_location='cpu')
 
     model_weight = saved_data['model']
@@ -175,6 +180,7 @@ def get_models(src_vocab_size, tgt_vocab_size, config):
         return : language_models, models
     '''
     language_models = [
+        # P(Y) : tgt_vocab_size(Y)에 대한 language model
         LanguageModel(
             tgt_vocab_size,
             config.word_vec_size,
@@ -182,6 +188,7 @@ def get_models(src_vocab_size, tgt_vocab_size, config):
             n_layers=config.n_layers,
             dropout_p=config.dropout,
         ),
+        # P(X)에 대한 LM
         LanguageModel(
             src_vocab_size,
             config.word_vec_size,
@@ -193,6 +200,7 @@ def get_models(src_vocab_size, tgt_vocab_size, config):
 
     if config.use_transformer:
         models = [
+            # X2Y model.
             Transformer(
                 src_vocab_size,
                 config.hidden_size,
@@ -202,6 +210,7 @@ def get_models(src_vocab_size, tgt_vocab_size, config):
                 n_dec_blocks=config.n_layers,
                 dropout_p=config.dropout,
             ),
+            # Y2X model
             Transformer(
                 tgt_vocab_size,
                 config.hidden_size,
@@ -302,15 +311,16 @@ def main(config, model_weight=None, opt_weight=None):
     crits = get_crits(
         src_vocab_size,
         tgt_vocab_size,
-        pad_index=data_loader.PAD
+        pad_index=data_loader.PAD # PAD인덱스를 넘겨줘야 하는데,... 이상하다...
     )
 
     if model_weight is not None:
-        for model, w in zip(models + language_models, model_weight):
-            model.load_state_dict(w)
+        for model, w in zip(models + language_models, model_weight): # models, languate_models는 모두 리스트인데, 리스트+리스트 => 큰리스트 이다. ====>>>> 따라서 [s2s_X2Y, s2s_Y2X, P(X), P(Y)]이런식으로 생길거야.
+            model.load_state_dict(w) # model weight를 필요에 따라서 로딩해줘야함.
 
-    load_lm(config.lm_fn, language_models)
+    load_lm(config.lm_fn, language_models) # language model을 로드함. // 학습된 language model이 있을건데 그 웨이트를 불러옴.
 
+    # gpu로 옮기자.
     if config.gpu_id >= 0:
         for lm, seq2seq, crit in zip(language_models, models, crits):
             lm.cuda(config.gpu_id)
@@ -319,11 +329,14 @@ def main(config, model_weight=None, opt_weight=None):
 
     dsl_trainer = DSLTrainer(config)
 
-    optimizers = get_optimizers(models, config)
 
+    # optimizer도 할당하고.
+    optimizers = get_optimizers(models, config)
+    # 불러옴.
     if opt_weight is not None:
         for opt, w in zip(optimizers, opt_weight):
             opt.load_state_dict(w)
+
 
     if config.verbose >= 2:
         print(language_models)
@@ -331,6 +344,7 @@ def main(config, model_weight=None, opt_weight=None):
         print(crits)
         print(optimizers)
 
+    # 지금까지 위에서 선언한거 다 받아서 train을 돌려줌.
     dsl_trainer.train(
         models,
         language_models,

@@ -345,3 +345,31 @@ lm같은경우 금방 트레인 되기 때문에 resume_train 과 같은 기능�
 loss 부분 : (_get_loss)
 
 DualSupervisedTrainingEngine을 새로 만든 이유는 : 모델을 두개를 동시에 업뎃하다보니, skim이 조금 다름... 따라서 새로 만들었다.
+
+
+14-4. dual_train.py
+---------------------------------------------------
+저장된 결과물(모델등)을 translate.py에서 불러와야 하는데, dual_supervised learning은 기존의 것과 형태가 다르게 생겼어. 그래서 Translate.py의 수정이 필요함.
+기존의 Translate.py는 single model에 대해서만 inference하도록 되어있음. -> dual learning에 대해서도 가능하도록 수정이 필요함.
+어떤 모델을 들고올거냐, 어떤 보캡을 들고올거냐 그게 중요하다.
+
+
+
+14-5. dsl cmd
+---------------------------------------------------
+echo '먼저 warm-up상태로만 30epoch를 학습하도록 하겠습니다. 추후 학습이 완료된 모델을 가지고 max_grad_norm을 5로 주어 resume training 할 예정입니다.'
+
+python dual_train.py --asdf
+
+python dual_train.py --model_fn ./models/dsl.pth --lm_fn ./models/models.2020092models.20200922/ models.20200923/
+
+python dual_train.py --model_fn ./models/dsl.pth --lm_fn ./models/models.20200923/enko.lm.bs-256.max_length-64.ws-512.hs-768.n_layers-4.pth --train ./data/corpus.shuf.train.tok.bpe --valid ./data/corpus.shuf.valid.tok.bpe --lang enko --gpu_id 0 --batch_size 64 --n_epochs 30 --max_length 64 --dropout .2 --word_vec_size 512 --hidden_size 768 --n_layers 4 --max_grad_norm 1e+8 --iteration_per_update 4 --dsl_n_warmup_epochs 0
+
+echo '기존 학습된 모델을 활용하여 continue training 하도록 합니다.'
+
+python continue_dual_train.py --load_fn ./models/models.20200923/enko.bs-64.max_length-64.ws-512.hs-768.n_layers-4.iter_per_update-4.n_warmup-30.30.1.23-3.42.1.00.-2.73.1.40-4.05.1.24-3.45.pth --init_epoch 31 --n_epochs 40 --dsl_n_warmup_epochs 30 --dsl_lambda 1e-2 --model_fn ./models/dsl.pth
+
+
+
+14-6. evaluation
+----------------------------------------------------

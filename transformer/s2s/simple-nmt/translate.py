@@ -113,18 +113,32 @@ def to_text(indice, vocab):
     return lines
 
 
+
+'''
+------------------------------------------------------------------------------------------------
+is_dsl -> get_vocabs -> get_model 순서로 보면 된다.
+'''
+
 def is_dsl(train_config):
+    '''
+    return True (when dsl is on)
+    '''
     # return 'dsl_lambda' in vars(train_config).keys()
     return not ('rl_n_epochs' in vars(train_config).keys())
-
+    # dual leraning에서는 rl을 안하니까...    
 
 def get_vocabs(train_config, config, saved_data):
+    '''
+    dsl인지 아닌지에 따라 불러오는 vocab이 달라지네.
+    '''
     if is_dsl(train_config):
         assert config.lang is not None
 
         if config.lang == train_config.lang:
+            # 기존에 학습하던것도 enko이고 지금도 enko이면, is_reverse = False
             is_reverse = False
         else:
+            # 기존에는 enko였는데, 지금은 koen을 하고자해.. 그러면 True,
             is_reverse = True
 
         if not is_reverse:
@@ -168,6 +182,7 @@ def get_model(input_size, output_size, train_config, is_reverse=False):
 
     if is_dsl(train_config):
         if not is_reverse:
+            # reverse가 아니라면, X2Y인데 그게 인덱스로 0이였음.
             model.load_state_dict(saved_data['model'][0])
         else:
             model.load_state_dict(saved_data['model'][1])
@@ -192,12 +207,14 @@ if __name__ == '__main__':
         config.model_fn,
         map_location='cpu', # map_location = 'cpu' if config.gpu_id < 0 else 'cuda:%d' % config.gpu_id
     )
+        # saved_data는 k,v형태로 들어 있을거야.
 
 
     # Load configuration setting in training.
+        # saved_data의 config를 불러와.
     train_config = saved_data['config']
 
-    src_vocab, tgt_vocab, is_reverse = get_vocabs(train_config, config, saved_data)
+    src_vocab, tgt_vocab, is_reverse = get_vocabs(train_config, config, saved_data) # dual_trainer.py에 보면 save할때, vocab들도 저장을 함.
     # is_reverse는 dual learning할때 필요함. // dsl아니니까 그냥 저장된 vocab 불러옴.
 
 
@@ -216,6 +233,8 @@ if __name__ == '__main__':
     if config.gpu_id >= 0:
         model.cuda(config.gpu_id)
 
+    # 위에는 어떻게 세팅할건지에 해당함.
+    # inference하는 부분
     with torch.no_grad():
         # Get sentences from standard input.
         for lines in read_text(batch_size=config.batch_size): # 배치 사이즈만큼 읽어옴.

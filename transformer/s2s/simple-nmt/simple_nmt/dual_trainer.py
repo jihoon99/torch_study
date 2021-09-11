@@ -91,12 +91,12 @@ class DualSupervisedTrainingEngine(Engine):
     @staticmethod
     def _get_loss(x, y, x_hat, y_hat, crits, x_lm=None, y_lm=None, lagrange=1e-3):
         '''
-        # |x| = (batch_size, n) : 실제 정답이 들어있는 원핫 텐서
-        # |y| = (batch_size, m)
-        # |x_hat| = (batch_size, n, output_size0) : s2s로 부터 나온, loglikelihood : logP(x|y)
-        # |y_hat| = (batch_size, m, output_size1) : s2s로 부터 나온, loglikelihood : logP(y|x) - 확률분포가 들어있음.
-        # |x_lm| = |x_hat| = [bs, n, output_size0] : x의 LM인데, : sample별, 각 타임스탭별, 로그확률값임.
-        # |y_lm| = |y_hat|
+        |x| = (batch_size, n) : 실제 정답이 들어있는 원핫 텐서
+        |y| = (batch_size, m)
+        |x_hat| = (batch_size, n, output_size0) : s2s로 부터 나온, loglikelihood : logP(x|y)
+        |y_hat| = (batch_size, m, output_size1) : s2s로 부터 나온, loglikelihood : logP(y|x) - 확률분포가 들어있음.
+        |x_lm| = |x_hat| = [bs, n, output_size0] : x의 LM인데, : sample별, 각 타임스탭별, 로그확률값임.
+        |y_lm| = |y_hat|
         
         crits : [some, some] 두개의 element를 갖는 리스트인가바.
             X2Y, Y2X = 0,1
@@ -207,8 +207,8 @@ class DualSupervisedTrainingEngine(Engine):
             # Since encoder in seq2seq takes packed_sequence instance,
             # we need to re-sort if we use reversed src and tgt.
             x, y, restore_indice = DualSupervisedTrainingEngine._reorder(
-                mini_batch.src[0][:, :-1],
-                mini_batch.tgt[0][:, 1:-1],
+                mini_batch.src[0][:, :-1], # x가 decoder가 될거기 때문에 eos만 빼고 들어간다.
+                mini_batch.tgt[0][:, 1:-1], # y는 이제 encoder에 들어가야 하니까 eos,bos를 빼고 나오고.
                 mini_batch.tgt[1] - 2,
             )
             # |x| = (batch_size, n)
@@ -218,8 +218,10 @@ class DualSupervisedTrainingEngine(Engine):
                 restore_indice=restore_indice,
             )
             # |x_hat| = (batch_size, n, x_vocab_size)
+                # logP(x|y)
 
             if engine.state.epoch > engine.config.dsl_n_warmup_epochs:
+                # 웜업 단계를 초과했을때,(웜업단계라면, LM이 준비가 안됨.. maybe...........)
                 with torch.no_grad():
                     x_hat_lm = DualSupervisedTrainingEngine._restore_order(
                         engine.language_models[Y2X](x),
@@ -227,7 +229,9 @@ class DualSupervisedTrainingEngine(Engine):
                     )
                     # |x_hat_lm| = |x_hat|
 
-            x, y = mini_batch.src[0][:, 1:], mini_batch.tgt[0][:, 1:]
+            x, y = mini_batch.src[0][:, 1:], mini_batch.tgt[0][:, 1:] # x,y모두 decoder의 정답으로 쓸거니까, 모두 bos빼고 사용.
+
+            # dual_loss는 학습이 잘 되고있나 보기 위한 오브젝트임. update안할거야
             loss_x2y, loss_y2x, dual_loss = DualSupervisedTrainingEngine._get_loss(
                 x, y,
                 x_hat, y_hat,
@@ -235,7 +239,7 @@ class DualSupervisedTrainingEngine(Engine):
                 x_hat_lm, y_hat_lm,
                 # According to the paper, DSL should be warm-started.
                 # Thus, we turn-off the regularization at the beginning.
-                lagrange=engine.config.dsl_lambda if engine.state.epoch > engine.config.dsl_n_warmup_epochs else .0
+                lagrange=engine.config.dsl_lambda if engine.state.epoch > engine.config.dsl_n_warmup_epochs else .0 # 웜업인경우 0, 웜업이 아닌경우 
             )
 
             backward_targets = [
@@ -246,6 +250,7 @@ class DualSupervisedTrainingEngine(Engine):
         for scaler, backward_target in zip(engine.scalers, backward_targets):
             if engine.config.gpu_id >= 0 and not engine.config.off_autocast:
                 scaler.scale(backward_target).backward()
+                    # loss를 두개해도 작동하네(?), 그리고 list안에 있어도 작동하네?
             else:
                 backward_target.backward()
 
@@ -481,6 +486,9 @@ class DualSupervisedTrainer():
         '''
         models, language_models,crits, optimizers, vocabs, n_epochs, lr_schedulers는 모두 리스트로 들어올거야.
         lr_schedulers : 실험상 해봐도 별로 차이가 없어서 None으로 함.
+
+        models : s2s, transformers
+        language_models : simple-LM model
         '''
         # Declare train and validation engine with necessary objects.
         train_engine = DualSupervisedTrainingEngine(
