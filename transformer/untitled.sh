@@ -347,6 +347,7 @@ loss 부분 : (_get_loss)
 DualSupervisedTrainingEngine을 새로 만든 이유는 : 모델을 두개를 동시에 업뎃하다보니, skim이 조금 다름... 따라서 새로 만들었다.
 
 
+
 14-4. dual_train.py
 ---------------------------------------------------
 저장된 결과물(모델등)을 translate.py에서 불러와야 하는데, dual_supervised learning은 기존의 것과 형태가 다르게 생겼어. 그래서 Translate.py의 수정이 필요함.
